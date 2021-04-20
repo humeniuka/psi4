@@ -466,6 +466,12 @@ class PSI_API IntegralFactory {
     virtual OneBodyAOInt* ao_traceless_quadrupole();
     virtual OneBodySOInt* so_traceless_quadrupole();
 
+    /// Returns an OneBodyInt that computes the polarization integral.
+    virtual OneBodyAOInt* ao_polarization(const std::vector<double> &origin,
+					  int k, int mx, int my, int mz,
+					  double alpha, int q,
+					  int deriv = 0);
+    
     /// Returns an OneBodyInt that computes the nabla integral.
     virtual OneBodyAOInt* ao_nabla(int deriv = 0);
     virtual OneBodySOInt* so_nabla(int deriv = 0);

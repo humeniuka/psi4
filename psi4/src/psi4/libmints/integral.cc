@@ -38,6 +38,7 @@
 #include "psi4/libmints/angularmomentum.h"
 #include "psi4/libmints/nabla.h"
 #include "psi4/libmints/dipole.h"
+#include "psi4/libmints/polarization.h"
 #include "psi4/libmints/electrostatic.h"
 #include "psi4/libmints/pseudospectral.h"
 #include "psi4/libmints/kinetic.h"
@@ -150,6 +151,17 @@ OneBodyAOInt* IntegralFactory::ao_dipole(int deriv) { return new DipoleInt(spher
 OneBodySOInt* IntegralFactory::so_dipole(int deriv) {
     std::shared_ptr<OneBodyAOInt> ao_int(ao_dipole(deriv));
     return new OneBodySOInt(ao_int, this);
+}
+
+OneBodyAOInt* IntegralFactory::ao_polarization(const std::vector<double> &origin,
+					       int k, int mx, int my, int mz,
+					       double alpha, int q,
+					       int deriv) {
+  return new PolarizationInt(spherical_transforms_, bs1_, bs2_,
+			     origin,
+			     k, mx,my,mz,
+			     alpha, q,
+			     deriv);
 }
 
 OneBodyAOInt* IntegralFactory::ao_nabla(int deriv) { return new NablaInt(spherical_transforms_, bs1_, bs2_, deriv); }

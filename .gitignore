@@ -153,3 +153,11 @@ GTAGS
 GPATH
 GRTAGS
 Pipfile.lock
+
+# Visual Studio
+/.vscode/*
+
+# ignore emacs backup files
+*~
+\#*\#
+

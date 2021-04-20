@@ -40,6 +40,7 @@ list(APPEND sources
   electricfield.cc
   multipoles.cc
   dipole.cc
+  polarization.cc
   sointegral.cc
   extern.cc
   nabla.cc

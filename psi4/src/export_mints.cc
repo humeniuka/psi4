@@ -70,6 +70,9 @@
 #include "psi4/libmints/dipole.h"
 #include "psi4/libmints/overlap.h"
 #include "psi4/libmints/sieve.h"
+// QM/MM-2e-pol
+#include "psi4/libmints/polarization.h"
+
 
 #include <string>
 
@@ -813,7 +816,8 @@ void export_mints(py::module& m) {
     py::class_<NablaInt, std::shared_ptr<NablaInt>>(m, "NablaInt", pyOneBodyAOInt, "Computes nabla integrals");
     py::class_<AngularMomentumInt, std::shared_ptr<AngularMomentumInt>>(m, "AngularMomentumInt", pyOneBodyAOInt,
                                                                         "Computes angular momentum integrals");
-
+    py::class_<PolarizationInt, std::shared_ptr<PolarizationInt>>(m, "PolarizationInt", pyOneBodyAOInt, "Computes polarization integrals");
+    
     typedef bool (TwoBodyAOInt::*compute_shell_significant)(int, int, int, int);
     typedef size_t (TwoBodyAOInt::*compute_shell_ints)(int, int, int, int);
     py::class_<TwoBodyAOInt, std::shared_ptr<TwoBodyAOInt>> pyTwoBodyAOInt(m, "TwoBodyAOInt",
@@ -925,7 +929,8 @@ void export_mints(py::module& m) {
         .def("electrostatic", &IntegralFactory::electrostatic,
              "Returns a OneBodyInt that computes the point electrostatic potential")
         .def("overlap_3c", &IntegralFactory::overlap_3c,
-             "Returns a OneBodyInt that computes the 3 center overlap integral");
+             "Returns a OneBodyInt that computes the 3 center overlap integral")
+        .def("ao_polarization", &IntegralFactory::ao_polarization, "Returns a OneBodyInt that computes the AO polarization integrals");
 
     typedef std::shared_ptr<PetiteList> (MintsHelper::*petite_list_0)() const;
     typedef std::shared_ptr<PetiteList> (MintsHelper::*petite_list_1)(bool) const;
@@ -1016,7 +1021,29 @@ void export_mints(py::module& m) {
              "coordinates (needed for EFP and PE)")
         .def("electric_field_value", &MintsHelper::electric_field_value,
              "Electric field expectation value at given sites")
+        .def("ao_polarization", &MintsHelper::ao_polarization,
+	 R"LITERAL(
+polarization integrals 
 
+          mx  my  mz
+         x   y   z           - alpha r^2  q
+  <AO | ----------- (1 - exp            )   |AO  >
+     i      r^k                                j
+
+Parameters
+----------
+origin     :    list of 3 floats
+  Cartesian position of polarizable site to be used instead of the origin
+k, mx,my,mz  :    ints >= 0, k > 2
+  powers in the polarization operator `O(x,y,z) = x^mx * y^my * z^mz |r|^{-k}`
+alpha        :    float >> 0
+  exponent of cutoff function
+q            :    int
+  power of cutoff function
+)LITERAL",
+	     "origin"_a,
+	     "k"_a, "mx"_a, "my"_a, "mz"_a,
+	     "alpha"_a, "q"_a)
         // Two-electron AO
         .def("ao_eri", normal_eri_factory(&MintsHelper::ao_eri), "AO ERI integrals", "factory"_a = nullptr)
         .def("ao_eri", normal_eri2(&MintsHelper::ao_eri), "AO ERI integrals", "bs1"_a, "bs2"_a, "bs3"_a, "bs4"_a)
@@ -1065,6 +1092,7 @@ void export_mints(py::module& m) {
         .def("perturb_grad", perturb_grad_xyz(&MintsHelper::perturb_grad), "First nuclear derivative perturb integrals")
         .def("core_hamiltonian_grad", &MintsHelper::core_hamiltonian_grad,
              "First nuclear derivative T + V + Perturb integrals")
+        .def("polarization_grad", &MintsHelper::polarization_grad, "First nuclear derivative polarization integrals")
 
         // First and second derivatives of one and two electron integrals in AO and MO basis.
         .def("ao_oei_deriv1", &MintsHelper::ao_oei_deriv1,

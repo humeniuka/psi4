@@ -33,7 +33,10 @@
 #include "psi4/libmints/multipolesymmetry.h"
 #include "psi4/libpsi4util/process.h"
 
+#include "psi4/libmints/vector3.h"
+
 #include <vector>
+
 
 namespace psi {
 
@@ -297,6 +300,7 @@ class PSI_API MintsHelper {
     std::vector<SharedMatrix> ao_quadrupole();
     /// Vector AO Traceless Quadrupole Integrals
     std::vector<SharedMatrix> ao_traceless_quadrupole();
+
     /// AO EFP Multipole Potential Integrals
     std::vector<SharedMatrix> ao_efp_multipole_potential(const std::vector<double>& origin = {0., 0., 0.},
                                                          int deriv = 0);
@@ -331,6 +335,8 @@ class PSI_API MintsHelper {
     std::vector<SharedMatrix> so_quadrupole();
     /// Vector SO Traceless Quadrupole Integrals
     std::vector<SharedMatrix> so_traceless_quadrupole();
+    /// Vector SO Polarization Integrals
+    std::vector<SharedMatrix> so_polarization();
 
     /// Returns a CdSalcList object
     std::shared_ptr<CdSalcList> cdsalcs(int needed_irreps = 0xF, bool project_out_translations = true,
@@ -352,10 +358,21 @@ class PSI_API MintsHelper {
     SharedMatrix kinetic_grad(SharedMatrix D);
     SharedMatrix potential_grad(SharedMatrix D);
     SharedMatrix dipole_grad(SharedMatrix D);
+    SharedMatrix polarization_grad(SharedMatrix D);
     SharedMatrix perturb_grad(SharedMatrix D);
 
     /// Play function
     void play();
+
+    /// QM/MM-2e-pol
+    /// Vector AO Polarization Integrals
+    SharedMatrix ao_polarization(// position of polarizable atom
+                                 const std::vector<double> &origin,
+				 // operator    O(r) = x^mx y^my z^mz |r|^-k 
+				 int k, int mx, int my, int mz,
+				 // cutoff function F2(r) = (1 - exp(-alpha r^2))^q
+				 double alpha,  int q);
+
 };
 }  // namespace psi
 

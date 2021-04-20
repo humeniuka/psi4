@@ -16,6 +16,7 @@ foreach(dir_name
   libpsi4util
   libpsio
   libpsipcm
+  libqmmm2epol
   libqt
   libsapt_solver
   libscf_solver
