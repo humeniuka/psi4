@@ -50,8 +50,9 @@ def test_qmmm2epol():
     }
     
     # run closed-shell SCF calculation
-    SCF_E = qmmm2epol.rhf_qmmm2epol(molecule, polarizable_atoms, point_charges, 'cc-pVDZ',
+    rhf = qmmm2epol.RHF_QMMM2ePol(molecule, polarizable_atoms, point_charges, 'cc-pVDZ',
                                     polarizabilities=polarizabilities)
+    SCF_E = rhf.energy
     print('Final QMMM-2e-pol SCF energy : %.8f hartree' % SCF_E)
     
     # compare with expected result

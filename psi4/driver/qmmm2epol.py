@@ -32,6 +32,7 @@ Module with classes to integrate polarizable atoms into a QM calculation
 import numpy as np
 import numpy.linalg as la
 import scipy.linalg as sla
+import itertools
 
 import psi4
 from psi4 import core
@@ -185,7 +186,7 @@ class PolarizationHamiltonian(object):
 
         with the polarization integrals
                            r - R
-          F  (R)     = (m|---------|n)               3 x Nbf x Nbf
+          F  (R)     = (m|--------- Cutoff(|r-R|) |n)               3 x Nbf x Nbf
            mn              |r-R|^3
         """        
         # cartesian coordinates of polarizable sites
@@ -207,7 +208,7 @@ class PolarizationHamiltonian(object):
             F[3*i+2,:,:] = self.mints.ao_polarization(R[i,:], 
                                                       3, 0,0,1, # k=3, mx=0, my=0, mz=1
                                                       self.cutoff_alpha, self.cutoff_power)
-        
+
         return F
 
     def _nuclear_fields(self):
@@ -340,19 +341,21 @@ class PolarizationHamiltonian(object):
         """
         compute correction to core Hamiltonian due to presence of polarizable atoms
 
-                    (1)       (n)     (e)                 -1      (e)     (e)
-          V   = (a|h   |b) = F    A  F     - 1/2 sum    (S  )    F    A  F
-           ab                         ab            cd       cd   ac      db
+                    (1)         (n)     (e)                 -1      (e)     (e)
+          V   = (a|h   |b) = - F    A  F     - 1/2 sum    (S  )    F    A  F
+           ab                           ab            cd       cd   ac      db
 
         Returns
         -------
         V    :    np.ndarray (Nbf x Nbf)
           matrix elements of one-electron part of polarization Hamiltonian
         """
-        V = np.einsum('i,ij,jab->ab', self.F_nucl, self.A, self.F_elec)
+        Vne = -np.einsum('i,ij,jab->ab', self.F_nucl, self.A, self.F_elec)
         # S^(-1) F^(e)
         SinvF = np.einsum('cd,idb->icb', self.Sinv, self.F_elec)
-        V -= 0.5 * np.einsum('iag,ij,jgb->ab', self.F_elec, self.A, SinvF)
+        Vee = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, self.A, SinvF)
+
+        V = Vne + Vee
 
         return V
         
@@ -371,189 +374,324 @@ class PolarizationHamiltonian(object):
         E = -0.5 * np.einsum('i,ij,j', self.F_nucl, self.A, self.F_nucl)
         return E
 
+    def two_electron_part_MO(self, C):
+        """
+        transform two-electron part of polarization Hamiltonian to the MO basis.
 
-################# TESTING ##########################
+        This is not as expensive as transforming the electron-repulsion integrals,
+        since the polarization integrals factorize. So we only have to transform
 
-def rhf_qmmm2epol(molecule, polarizable_atoms, point_charges, basis_name,
-                  polarizabilities=_theoretical_polarizabilities):
-    """
-    perform restricted Hartree-Fock calculation for a closed-shell molecule
-    with the QM/MM-2e-pol Hamiltonian. Polarizable atoms are incorporated
-    in an effective manner by changing the two- and one-electron matrix elements
-    of the Hamiltonian.
+            (e)         (e)
+           F     = sum  F    C   C
+            ij    a,b   ab   ai  aj
+
+        Parameters
+        ----------
+        C   :  np.ndarray (Nbf x Nmo)
+          molecular orbital coefficients
+
+        Returns
+        -------
+        I   :  np.ndarray (Nmo x Nmo x Nmo x Nmo)
+          matrix elements in the MO basis
+        """
+        # transform F from AO to MO basis
+        F_elec = np.einsum('xab,ai,bj->xij', self.F_elec, C, C)
+        # integrals are built in the same way as in the AO basis
+        I = -np.einsum('iab,ij,jcd->abcd', F_elec, self.A, F_elec)
+        return I
+
+
+class SCFNotConverged(Exception):
+    pass
     
-    Parameters
-    ----------
-    molecule          : psi4.core.Molecule
-      atoms in QM part are treated explicitely with quantum mechanics
-    polarizable_atoms : psi4.core.Molecule
-      polarizable atoms in the MM part can be polarized by the QM part and generate
-      a polarization potential, which in turn affects the electrons in the QM region.
-    point_charges     : psi4.core.Molecule
-      additional point charges if present
-    basis_name        : str
-      name of basis set, e.g. 'cc-pVDZ'
-    polarizabilities   :  dict
-      dictionary with atomic polarizabilities for each atom type
-
-    Returns
-    -------
-    SCF_E             : float
-      total SCF energy
-    """
-    # RHF adapted from https://github.com/humeniuka/psi4numpy/tree/master/Self-Consistent-Field
-    import time
+class RHF_QMMM2ePol(object):
+    def __init__(self, molecule, polarizable_atoms, point_charges,
+                 basis_name='cc-pVDZ', polarizabilities=_theoretical_polarizabilities,
+                 continue_anyway=False):
+        """
+        perform restricted Hartree-Fock calculation for a closed-shell molecule
+        with the QM/MM-2e-pol Hamiltonian. Polarizable atoms are incorporated
+        in an effective manner by changing the two- and one-electron matrix elements
+        of the Hamiltonian.
     
-    time_start = time.time()
+        Parameters
+        ----------
+        molecule          : psi4.core.Molecule
+          atoms in QM part are treated explicitely with quantum mechanics
+        polarizable_atoms : psi4.core.Molecule
+          polarizable atoms in the MM part can be polarized by the QM part and generate
+          a polarization potential, which in turn affects the electrons in the QM region.
+        point_charges     : psi4.core.Molecule
+          additional point charges if present
+        basis_name        : str
+          name of basis set, e.g. 'cc-pVDZ'
+        polarizabilities   :  dict
+          dictionary with atomic polarizabilities for each atom type
+        continue_anyway    :  bool
+          If True, no error is raised if the SCF cycle does not converge. 
+          For an FCI calculation any orthonormal basis of orbitals will do.
+        """
+        # RHF adapted from https://github.com/humeniuka/psi4numpy/tree/master/Self-Consistent-Field
+        import time
 
-    # QM atoms
-    molecule.print_out()
-    # MM atoms
-    polarizable_atoms.print_out()
-    point_charges.print_out()
-    
-    # basis for QM atoms
-    wfn = psi4.core.Wavefunction.build(molecule, basis_name)
-    assert wfn.nalpha() == wfn.nbeta(), "only works for closed-shell molecules"
-    basis = wfn.basisset()
-    ribasis = basis
+        time_start = time.time()
 
-    # Polarization Hamiltonian
-    if polarizable_atoms.natom() > 0:
-        polham = PolarizationHamiltonian(molecule, basis, ribasis,
-                                         polarizable_atoms, point_charges,
-                                         polarizabilities=polarizabilities)
-    else:
-        polham = None
+        # QM atoms
+        molecule.print_out()
+        # MM atoms
+        polarizable_atoms.print_out()
+        point_charges.print_out()
 
-    mints = psi4.core.MintsHelper(basis)
-    
-    # Build H_core
-    V = mints.ao_potential().np
-    T = mints.ao_kinetic().np
-    H = V + T
-    # nuclear energy
-    Enuc = molecule.nuclear_repulsion_energy()
+        # basis for QM atoms
+        wfn = psi4.core.Wavefunction.build(molecule, basis_name)
+        assert wfn.nalpha() == wfn.nbeta(), "only works for closed-shell molecules"
+        basis = wfn.basisset()
+        ribasis = basis
 
-    if not polham is None:
-        # add one-electron part of polarization potential to core Hamiltonian
-        Vpol = polham.one_electron_part()
-        H += Vpol
-        # nuclear part of polarization Hamiltonian
-        Enuc += polham.zero_electron_part()
-        
-    # overlap matrix in AO basis
-    S = mints.ao_overlap().np
-    # Loewdin orthogonalization
-    # X^{-1} = S^{1/2}
-    Xinv = sla.sqrtm(S)
-    # X = S^{-1/2}
-    X = la.inv(Xinv)
-    
-    # Initialize the JK object
-    jk = psi4.core.JK.build(basis, jk_type="DF")
-    jk.set_memory(int(1.25e8))  # 1GB
-    jk.initialize()
-    jk.print_header()
+        # Polarization Hamiltonian
+        if polarizable_atoms.natom() > 0:
+            polham = PolarizationHamiltonian(molecule, basis, ribasis,
+                                             polarizable_atoms, point_charges,
+                                             polarizabilities=polarizabilities)
+        else:
+            polham = None
 
-    # number of occupied orbitals
-    ndocc = wfn.nalpha()
+        mints = psi4.core.MintsHelper(basis)
 
-    # Calculate initial guess for MOs by diaginalizing core Hamiltonian
-    e, C = sla.eigh(H, S)
-    # select coefficients of doubly occupied orbitals
-    Cocc = C[:, :ndocc]
-    
-    # initial density matrix
-    D = 2 * np.einsum('pi,qi->pq', Cocc, Cocc)
-    
-    # Set defaults
-    maxiter = 100
-    E_conv = 1.0E-10
-    diis_conv = 1.0E-6
+        # Build H_core
+        V = mints.ao_potential().np
+        T = mints.ao_kinetic().np
+        H = V + T
+        # nuclear energy
+        Enuc = molecule.nuclear_repulsion_energy()
 
-    Eold = 0.0
-
-    # Pulay's direct inversion in iterative subspace
-    diis = psi4.p4util.solvers.DIIS()
-    
-    for SCF_ITER in range(1, maxiter + 1):
-
-        # Compute JK
-        jk.C_left_add(core.Matrix.from_array(Cocc))
-        jk.compute()
-        jk.C_clear()
-
-        J = jk.J()[0].np
-        K = jk.K()[0].np
-
-        # add (\Delta J) and (\Delta K) from polarization Hamiltonian
         if not polham is None:
-            J += polham.coulomb_J(Cocc, Cocc)
-            K += polham.exchange_K(Cocc, Cocc)
+            # add one-electron part of polarization potential to core Hamiltonian
+            Vpol = polham.one_electron_part()
+            H += Vpol
+            # nuclear part of polarization Hamiltonian
+            Enuc += polham.zero_electron_part()
 
-        # Build Fock matrix in AO basis
-        F = H + 2*J - K
+        # overlap matrix in AO basis
+        S = mints.ao_overlap().np
+        # Loewdin orthogonalization
+        # X^{-1} = S^{1/2}
+        Xinv = sla.sqrtm(S)
+        # X = S^{-1/2}
+        X = la.inv(Xinv)
 
-        # check that MO coefficients are orthogonal with respect to overlap matrix
-        #  C^T . S . C = Id
-        assert la.norm(np.dot(Cocc.T, np.dot(S, Cocc))  - np.eye(ndocc)) < 1.0e-5
+        # Initialize the JK object
+        jk = psi4.core.JK.build(basis, jk_type="DF")
+        jk.set_memory(int(1.25e8))  # 1GB
+        jk.initialize()
+        jk.print_header()
+
+        # number of occupied orbitals
+        ndocc = wfn.nalpha()
+
+        # Calculate initial guess for MOs by diaginalizing core Hamiltonian
+        e, C = sla.eigh(H, S)
+        # select coefficients of doubly occupied orbitals
+        Cocc = C[:, :ndocc]
+
+        # initial density matrix
+        D = 2 * np.einsum('pi,qi->pq', Cocc, Cocc)
+
+        # Set defaults
+        maxiter = 100
+        E_conv = 1.0E-10
+        diis_conv = 1.0E-6
+
+        Eold = 0.0
+
+        # Pulay's direct inversion in iterative subspace
+        diis = psi4.p4util.solvers.DIIS()
+
+        for SCF_ITER in range(1, maxiter + 1):
+
+            # Compute JK
+            jk.C_left_add(core.Matrix.from_array(Cocc))
+            jk.compute()
+            jk.C_clear()
+
+            J = jk.J()[0].np
+            K = jk.K()[0].np
+
+            # add (\Delta J) and (\Delta K) from polarization Hamiltonian
+            if not polham is None:
+                J += polham.coulomb_J(Cocc, Cocc)
+                K += polham.exchange_K(Cocc, Cocc)
+                
+            # Build Fock matrix in AO basis
+            F = H + 2*J - K
+
+            # check that MO coefficients are orthogonal with respect to overlap matrix
+            #  C^T . S . C = Id
+            assert la.norm(np.dot(Cocc.T, np.dot(S, Cocc))  - np.eye(ndocc)) < 1.0e-5
+
+            # see
+            #   Pulay, Peter. "Improved SCF convergence acceleration."
+            #   Journal of Computational Chemistry 3.4 (1982): 556-560.
+            #
+            # error vector
+            error = F.dot(D).dot(S) - S.dot(D).dot(F)
+            error = X.dot(error).dot(X)
+
+            diis.add(core.Matrix.from_array(F), core.Matrix.from_array(error))
+
+            dRMS = la.norm(error)
+
+            # SCF energy and update: [Szabo:1996], Eqn. 3.184, pp. 150
+            SCF_E = 0.5 * np.einsum('pq,pq->', F + H, D) + Enuc
+
+            dE = abs(SCF_E - Eold)
+            print('SCF Iteration %3d: Energy = %20.16f   dE = %10.5E   dRMS = %10.5E' % (SCF_ITER, SCF_E, (SCF_E - Eold), dRMS))
+            if (abs(dE < E_conv) and (dRMS < diis_conv)):
+                print("SCF CONVERGED")
+                break
+
+            Eold = SCF_E
+
+            if (SCF_ITER > 1):
+                F = diis.extrapolate().np
+
+            # Diagonalize Fock matrix by solving the generalized eigenvalue problem
+            #   F C = e S C
+            e, C = sla.eigh(F, S)
+            # MO coefficients of doubly occupied orbitals
+            Cocc = C[:,:ndocc]
+            # density matrix in AO basis
+            D = 2 * np.einsum('ai,bi->ab', Cocc, Cocc)
+            #print("number of lectrons = ", np.sum(D*S))
+
+            # Is the density matrix idempotent ?
+            err = 0.5*D - (0.5*D).dot(S).dot(0.5*D)
+            assert la.norm(err) < 1.0e-10, "Density matrix not idempotent, |D - D.S.D| > 0"
+
+            if SCF_ITER == maxiter:
+                if continue_anyway == False:
+                    psi4.core.clean()
+                    raise SCFNotConverged("Maximum number of SCF cycles exceeded.")
+
+        print('Total time for SCF iterations: %.3f seconds \n' % (time.time() - time_start))
+
+        # store QM geometry
+        self.molecule = molecule
+        # number of atomic and molecular orbitals
+        self.nao, self.nmo = C.shape
+        # number of electrons
+        self.nelec = 2*ndocc
+        # integral 
+        self.mints = mints
+        # MO coefficients
+        self.C = C
+        # Hcore
+        self.H = H
+        # overlap matrix
+        self.S = S
+        # total SCF energy
+        self.SCF_E = SCF_E
+        # nuclear energy
+        self.Enuc = Enuc
+        # polarization Hamiltonian
+        self.polham = polham    
         
-        # see
-        #   Pulay, Peter. "Improved SCF convergence acceleration."
-        #   Journal of Computational Chemistry 3.4 (1982): 556-560.
-        #
-        # error vector
-        error = F.dot(D).dot(S) - S.dot(D).dot(F)
-        error = X.dot(error).dot(X)
+    @property
+    def energy(self):
+        """
+        total SCF energy (in Hartree)
+        """
+        return self.SCF_E
+
+    def hamiltonian_MO(self):
+        """
+        transform one- and two-electron part of Hamiltonian from the 
+        AO to the MO basis, which is orthonormal.
+
+        Returns
+        -------
+        h0   :  float
+          core energy
+        h1   :  np.ndarray (Nmo x Nmo)
+          1e MO matrix elements (i|h^(1)|j)
+        h2   :  np.ndarray (Nmo x Nmo x Nmo x Nmo)
+          2e MO matrix elements (ij|h^(1)|kl)
+        """
+        # transform one-electron part (Hcore), which already includes the contribution
+        # from the polarization integrals.
+        h1 = np.einsum('ab,ai,bj->ij', self.H, self.C, self.C)
+        # transform electron repulsion integrals, mints expects coefficients as core.Matrix 
+        C = core.Matrix.from_array(self.C)
+        h2 = self.mints.mo_eri(C, C, C, C).np
+        if not (self.polham is None):
+            # add two-electron part from polarization
+            h2 += self.polham.two_electron_part_MO(self.C)
+        return self.Enuc, h1, h2
+
+    def fcidump(self, filename="/tmp/hamiltonian.FCIDUMP",
+                MS2=0, NROOT=1, ISYM=1, **kwds):
+        """
+        save matrix elements of Hamiltonian in MO basis in the format understood
+        by Knowles' and Handy's Full CI program. The structure of the input data
+        is described in
         
-        diis.add(core.Matrix.from_array(F), core.Matrix.from_array(error))
+          [FCI] Knowles, Peter J., and Nicholas C. Handy. 
+                "A new determinant-based full configuration interaction method." 
+                Chem. Phys. Lett. 111(4-5) (1984): 315-321.
 
-        dRMS = la.norm(error)
+        Parameters
+        ----------
+        filename   :  str
+          path to FCIDUMP output file
+
+        Additional variables for the header of the FCI programm can be 
+        specified as keywords. See section 3.3.1 in [FCI] for a list of 
+        all variables.
+
+        Keywords
+        --------
+        MS2   :  int
+          total spin
+        NROOT :  int
+          number of states in the given spin and symmetry space
+        ISYM  :  int
+          spatial symmetry of wavefunction
+        ...
+        """
+        import fortranformat
+        formatter=fortranformat.FortranRecordWriter('(E24.16,I4,I4,I4,I4/)')
         
-        # SCF energy and update: [Szabo:1996], Eqn. 3.184, pp. 150
-        SCF_E = 0.5 * np.einsum('pq,pq->', F + H, D) + Enuc
-
-        dE = abs(SCF_E - Eold)
-        print('SCF Iteration %3d: Energy = %4.16f   dE = % 1.5E   dRMS = %1.5E' % (SCF_ITER, SCF_E, (SCF_E - Eold), dRMS))
-        if (abs(dE < E_conv) and (dRMS < diis_conv)):
-            break
-
-        Eold = SCF_E
-
-        if (SCF_ITER > 1):
-            F = diis.extrapolate().np
-
-        # Diagonalize Fock matrix by solving the generalized eigenvalue problem
-        #   F C = e S C
-        e, C = sla.eigh(F, S)
-        # MO coefficients of doubly occupied orbitals
-        Cocc = C[:,:ndocc]
-        # density matrix in AO basis
-        D = 2 * np.einsum('ai,bi->ab', Cocc, Cocc)
-        #print("number of lectrons = ", np.sum(D*S))
-        
-        # Is the density matrix idempotent ?
-        err = 0.5*D - (0.5*D).dot(S).dot(0.5*D)
-        assert la.norm(err) < 1.0e-10, "Density matrix not idempotent, |D - D.S.D| > 0"
-
-        
-        if SCF_ITER == maxiter:
-            psi4.core.clean()
-            raise Exception("Maximum number of SCF cycles exceeded.")
-
-    print('Total time for SCF iterations: %.3f seconds \n' % (time.time() - time_start))
-
-    return SCF_E
-    
-    
+        h0, h1, h2 = self.hamiltonian_MO()
+        with open(filename, "w") as f:
+            # header
+            f.write(f"$FCI NORB={self.nmo},NELEC={self.nelec},\n")
+            f.write(f" MS2={MS2},ISYM={ISYM},NROOT={NROOT},\n")
+            for key,value in kwds.items():
+                # additional keywords
+                f.write(f" {key}={value},\n")
+            f.write("$END\n")
+            # enumerate two-electron integrals
+            for i in range(0,self.nmo):
+                for j in range(0, self.nmo):
+                    for k in range(0, self.nmo):
+                        for l in range(0, self.nmo):
+                            f.write(formatter.write([ h2[i,j,k,l], i+1,j+1,k+1,l+1 ]))
+            # enumerate one-electron integrals
+            for i in range(0,self.nmo):
+                for j in range(0, self.nmo):
+                    f.write(formatter.write([ h1[i,j], i+1,j+1, 0, 0 ]))
+            # core energy
+            f.write(formatter.write([ h0, 0, 0, 0, 0 ]))
+                
+            
 if __name__ == "__main__":
     import time
     import psi4
     psi4.set_memory('500 MB')
 
     #
-    # Li+ (QM) ----- He (CPP)
+    # Li+ (QM) ----- He (MM)
     #
     
     molecule = psi4.geometry("""
@@ -579,9 +717,11 @@ if __name__ == "__main__":
     """)
     
     # run closed-shell SCF calculation
-    SCF_E = rhf_qmmm2epol(molecule, polarizable_atoms, point_charges, 'cc-pVDZ')
+    rhf = RHF_QMMM2ePol(molecule, polarizable_atoms, point_charges,
+                        basis_name='cc-pVDZ')
+    SCF_E = rhf.energy
     print('Final QMMM-2e-pol SCF energy : %.8f hartree' % SCF_E)
-    
+
     # compare with Xiao's code
     SCF_E_reference = -7.236167358544909
     print('expected                     : %.8f hartree' % SCF_E_reference)
@@ -589,3 +729,5 @@ if __name__ == "__main__":
     print("error = %.8f meV" % (error_eV * 1000))
     assert abs(SCF_E - SCF_E_reference) < 1.0e-6
 
+    # export matrix elements in MO basis for Peter Knowles' full CI program
+    #rhf.fcidump(filename="/tmp/Li+_QM__He_MM.fcidump", NROOT=2)

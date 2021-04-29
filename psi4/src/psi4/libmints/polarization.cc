@@ -86,8 +86,8 @@ void PolarizationInt::compute_pair(// shells of orbitals in bra and ket
   // shift polarizable site to origin of coordinate system
   double A[3], B[3];
   for(int i=0; i<3; i++) {
-    A[i] = s1.center()[i] + origin[i];
-    B[i] = s2.center()[i] + origin[i];
+    A[i] = s1.center()[i] - origin[i];
+    B[i] = s2.center()[i] - origin[i];
   }
   int ao12;
   // angular momenta of the shells
@@ -140,8 +140,8 @@ void PolarizationInt::compute_pair_deriv1(// shells of orbitals in bra and ket
   // shift polarizable site to origin of coordinate system
   double A[3], B[3];
   for(int i=0; i<3; i++) {
-    A[i] = s1.center()[i] + origin[i];
-    B[i] = s2.center()[i] + origin[i];
+    A[i] = s1.center()[i] - origin[i];
+    B[i] = s2.center()[i] - origin[i];
   }
 
   int ao12;
@@ -228,20 +228,20 @@ void PolarizationInt::compute_pair_deriv1(// shells of orbitals in bra and ket
 		    + 2*a2 *  I1_plus.compute_pair(l1  ,m1  ,n1   ,l2  ,m2  ,n2+1);
 
 	      /*
-	        I(r1, rC, r2) = I(A, B)   with A=r1+rC and B=r2+rC
+	        I(r1, rC, r2) = I(A, B)   with A=r1-rC and B=r2-rC
 	      
 		by chain rule
 
 		  dI/dr1 = dI/dA
 		  dI/dr2 = dI/dB
-		  dI/drC = dI/dA + dI/dB
+		  dI/drC = - dI/dA - dI/dB
 	      */
 
 	      // x-coordinates of gradients
 	      // dI/dx1
 	      buffer_[center_1_start + (0 * size) + ao12] +=  gxA;
 	      // dI/dxC
-	      buffer_[center_c_start + (0 * size) + ao12] +=  gxA + gxB;
+	      buffer_[center_c_start + (0 * size) + ao12] += -gxA - gxB;
 	      // dI/dx2
 	      buffer_[center_2_start + (0 * size) + ao12] +=        gxB;
 
@@ -249,7 +249,7 @@ void PolarizationInt::compute_pair_deriv1(// shells of orbitals in bra and ket
 	      // dI/dy1
 	      buffer_[center_1_start + (1 * size) + ao12] +=  gyA;
 	      // dI/dyC
-	      buffer_[center_c_start + (1 * size) + ao12] +=  gyA + gyB;
+	      buffer_[center_c_start + (1 * size) + ao12] += -gyA - gyB;
 	      // dI/dy2
 	      buffer_[center_2_start + (1 * size) + ao12] +=        gyB;
 
@@ -257,7 +257,7 @@ void PolarizationInt::compute_pair_deriv1(// shells of orbitals in bra and ket
 	      // dI/dz1
 	      buffer_[center_1_start + (2 * size) + ao12] +=  gzA;
 	      // dI/dzC
-	      buffer_[center_c_start + (2 * size) + ao12] +=  gzA + gzB;
+	      buffer_[center_c_start + (2 * size) + ao12] += -gzA - gzB;
 	      // dI/dz2
 	      buffer_[center_2_start + (2 * size) + ao12] +=        gzB;
 
