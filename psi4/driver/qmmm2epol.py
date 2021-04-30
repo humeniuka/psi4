@@ -584,6 +584,7 @@ class RHF_QMMM2ePol(object):
         self.nelec = 2*ndocc
         # integral 
         self.mints = mints
+        self.jk = jk
         # MO coefficients
         self.C = C
         # Hcore
@@ -604,20 +605,77 @@ class RHF_QMMM2ePol(object):
         """
         return self.SCF_E
 
-    def hamiltonian_MO(self):
+    def _frozen_core_approximation(self, Ccore):
+        """
+        compute frozen core energy and core-valence Hamiltonian
+
+        In the frozen core approximation the core electrons (1s) are removed for subsequent
+        correlated caculation with only the valence electrons. The core-core interaction is
+        added to the nuclear energy (Efzc) and the interaction between the valence electrons
+        and the closed-shell core is incorporated as an additional term in the one-electron
+        part of the Hamiltonian.
+
+        Parameters
+        ----------
+        Ccore      :    np.ndarray (Nfc x Ncore)
+          molecular orbital coefficients of core orbitals (double occupied)
+
+        Returns
+        -------
+        Efzc       :    float
+          Hartree-Fock energy of closed-shell cores
+        h1_fzc     :    np.ndarray (Nbf x Nbf)
+          effective Hamiltonian for core-valence interaction in AO basis
+        """
+        # density matrix of core orbitals
+        Dcore = 2 * np.einsum('ai,bi->ab', Ccore, Ccore)
+
+        # Compute JK for core Fock matrix
+        jk = self.jk
+        jk.C_left_add(core.Matrix.from_array(Ccore))
+        jk.compute()
+        jk.C_clear()
+
+        J = jk.J()[0].np
+        K = jk.K()[0].np
+        
+        # add (\Delta J) and (\Delta K) from polarization Hamiltonian
+        if not self.polham is None:
+            J += self.polham.coulomb_J(Ccore, Ccore)
+            K += self.polham.exchange_K(Ccore, Ccore)
+
+        # Fock matrix constructed only from the density of the core electrons
+        # F[Dcore]
+        Fcore = self.H + 2*J - K
+        # core-valence Hamiltonian in AO basis
+        h1_fzc = Fcore - self.H
+
+        # frozen core energy, core-core interaction
+        Efzc = 0.5 * np.einsum('pq,pq', Fcore + self.H, Dcore)
+
+        return Efzc, h1_fzc
+
+        
+    def hamiltonian_MO(self, frozen_core=True):
         """
         transform one- and two-electron part of Hamiltonian from the 
         AO to the MO basis, which is orthonormal.
 
+        Parameters
+        ----------
+        frozen_core   :  bool
+          If True, 1s core orbitals are replaced by an effective Hamiltonian
+
         Returns
         -------
         h0   :  float
-          core energy
+          core energy (nuclear repulsion + HF energy of frozen core electrons)
         h1   :  np.ndarray (Nmo x Nmo)
           1e MO matrix elements (i|h^(1)|j)
         h2   :  np.ndarray (Nmo x Nmo x Nmo x Nmo)
           2e MO matrix elements (ij|h^(1)|kl)
         """
+        # == AO to MO transformation ==
         # transform one-electron part (Hcore), which already includes the contribution
         # from the polarization integrals.
         h1 = np.einsum('ab,ai,bj->ij', self.H, self.C, self.C)
@@ -627,8 +685,42 @@ class RHF_QMMM2ePol(object):
         if not (self.polham is None):
             # add two-electron part from polarization
             h2 += self.polham.two_electron_part_MO(self.C)
-        return self.Enuc, h1, h2
 
+        if frozen_core:
+            # count number of core orbitals
+            ncore = 0
+            for i in range(0, self.molecule.natom()):
+                if self.molecule.Z(i) > 2:
+                    # elements in the second row have double occupied 1s core orbitals
+                    ncore += 1
+            self.ncore = ncore
+
+            # MO coefficients of core orbitals
+            Ccore = self.C[:,:ncore]
+
+            # == Frozen Core Approximation ==
+            Efzc, h1_fzc_ao = self._frozen_core_approximation(Ccore)
+            # transform Hamiltonian for interaction between frozen core
+            # and valence electrons to MO basis
+            h1_fzc = np.einsum('ab,ai,bj->ij', h1_fzc_ao, self.C, self.C)
+            # add interaction between valence electrons and frozen core to one-electron part
+            h1 += h1_fzc
+            
+            print(f"number of core orbitals  : {ncore}")
+            print(f"frozen core energy : {Efzc} Hartree")
+            nc = ncore
+            
+            h0 = self.Enuc + Efzc
+            h1 = h1[nc:,nc:]
+            h2 = h2[nc:,nc:,nc:,nc:]
+
+        else:
+            # no core electrons, core energy is equal to repulsion between nuclei
+            self.ncore = 0
+            h0 = self.Enuc
+            
+        return h0, h1, h2
+                
     def fcidump(self, filename="/tmp/hamiltonian.FCIDUMP",
                 MS2=0, NROOT=1, ISYM=1, **kwds):
         """
@@ -665,21 +757,23 @@ class RHF_QMMM2ePol(object):
         h0, h1, h2 = self.hamiltonian_MO()
         with open(filename, "w") as f:
             # header
-            f.write(f"$FCI NORB={self.nmo},NELEC={self.nelec},\n")
+            f.write(f"$FCI NORB={self.nmo-self.ncore},NELEC={self.nelec-2*self.ncore},\n")
             f.write(f" MS2={MS2},ISYM={ISYM},NROOT={NROOT},\n")
             for key,value in kwds.items():
                 # additional keywords
                 f.write(f" {key}={value},\n")
             f.write("$END\n")
+            # number of valence orbitals
+            nmo = self.nmo-self.ncore
             # enumerate two-electron integrals
-            for i in range(0,self.nmo):
-                for j in range(0, self.nmo):
-                    for k in range(0, self.nmo):
-                        for l in range(0, self.nmo):
+            for i in range(0,nmo):
+                for j in range(0, nmo):
+                    for k in range(0, nmo):
+                        for l in range(0, nmo):
                             f.write(formatter.write([ h2[i,j,k,l], i+1,j+1,k+1,l+1 ]))
             # enumerate one-electron integrals
-            for i in range(0,self.nmo):
-                for j in range(0, self.nmo):
+            for i in range(0, nmo):
+                for j in range(0, nmo):
                     f.write(formatter.write([ h1[i,j], i+1,j+1, 0, 0 ]))
             # core energy
             f.write(formatter.write([ h0, 0, 0, 0, 0 ]))
@@ -720,11 +814,11 @@ if __name__ == "__main__":
     rhf = RHF_QMMM2ePol(molecule, polarizable_atoms, point_charges,
                         basis_name='cc-pVDZ')
     SCF_E = rhf.energy
-    print('Final QMMM-2e-pol SCF energy : %.8f hartree' % SCF_E)
+    print('Final QMMM-2e-pol SCF energy : %.8f Hartree' % SCF_E)
 
     # compare with Xiao's code
     SCF_E_reference = -7.236167358544909
-    print('expected                     : %.8f hartree' % SCF_E_reference)
+    print('expected                     : %.8f Hartree' % SCF_E_reference)
     error_eV = (SCF_E - SCF_E_reference) * 27.211
     print("error = %.8f meV" % (error_eV * 1000))
     assert abs(SCF_E - SCF_E_reference) < 1.0e-6
