@@ -407,7 +407,8 @@ class SCFNotConverged(Exception):
     
 class RHF_QMMM2ePol(object):
     def __init__(self, molecule, polarizable_atoms, point_charges,
-                 basis_name='cc-pVDZ', polarizabilities=_theoretical_polarizabilities,
+                 basis='cc-pVDZ',
+                 polarizabilities=_theoretical_polarizabilities,
                  continue_anyway=False):
         """
         perform restricted Hartree-Fock calculation for a closed-shell molecule
@@ -424,11 +425,11 @@ class RHF_QMMM2ePol(object):
           a polarization potential, which in turn affects the electrons in the QM region.
         point_charges     : psi4.core.Molecule
           additional point charges if present
-        basis_name        : str
-          name of basis set, e.g. 'cc-pVDZ'
-        polarizabilities   :  dict
+        basis             : str or psi4.core.BasisSet
+          name of basis set, e.g. 'cc-pVDZ', or basis set object
+        polarizabilities  : dict
           dictionary with atomic polarizabilities for each atom type
-        continue_anyway    :  bool
+        continue_anyway   :  bool
           If True, no error is raised if the SCF cycle does not converge. 
           For an FCI calculation any orthonormal basis of orbitals will do.
         """
@@ -444,7 +445,7 @@ class RHF_QMMM2ePol(object):
         point_charges.print_out()
 
         # basis for QM atoms
-        wfn = psi4.core.Wavefunction.build(molecule, basis_name)
+        wfn = psi4.core.Wavefunction.build(molecule, basis)
         assert wfn.nalpha() == wfn.nbeta(), "only works for closed-shell molecules"
         basis = wfn.basisset()
         ribasis = basis
@@ -812,7 +813,7 @@ if __name__ == "__main__":
     
     # run closed-shell SCF calculation
     rhf = RHF_QMMM2ePol(molecule, polarizable_atoms, point_charges,
-                        basis_name='cc-pVDZ')
+                        basis='cc-pVDZ')
     SCF_E = rhf.energy
     print('Final QMMM-2e-pol SCF energy : %.8f Hartree' % SCF_E)
 
