@@ -28,6 +28,20 @@
 
 """
 Module with classes to integrate polarizable atoms into a QM calculation
+
+References
+----------
+[CPP]    Schwerdtfeger, P., and H. Silberbach. 
+         "Multicenter integrals over long-range operators using Cartesian Gaussian functions." 
+         Phys. Rev. A 37.8 (1988): 2834.
+[Meyer]  Mueller, Wolfgang, Joachim Flesch, and Wilfried Meyer. 
+        "Treatment of intershell correlation effects in abinitio calculations by use of core polarization potentials. 
+          Method and application to alkali and alkaline earth atoms." 
+         J. Chem. Phys. 80.7 (1984): 3297-3310.
+[Thole]  B.T. Thole, 
+        "Molecular polarizabilities calculated with a modified dipole interaction."
+         Chem. Phys. 59 (1981), 341-350.
+
 """
 import numpy as np
 import numpy.linalg as la
@@ -78,29 +92,34 @@ def _T(rvec):
 class PolarizationHamiltonian(object):
     def __init__(self, molecule, basis, ribasis, polarizable_atoms, point_charges,
                  polarizabilities=_theoretical_polarizabilities,
-                 same_site_integrals='exact'):
+                 same_site_integrals='exact',
+                 dipole_damping=True):
         """
         two-electron, one-electron and zero-electron contributions to electronic
         Hamiltonian due to the presence of polarizable sites
 
         Parameters
         ----------
-        molecule           :  psi4.core.Molecule
+        molecule            :  psi4.core.Molecule
           QM part
-        basis              :  psi4.core.BasisSet
+        basis               :  psi4.core.BasisSet
           basis set for QM part
-        ribasis            :  psi4.core.BasisSet
+        ribasis             :  psi4.core.BasisSet
           auxiliary basis set for QM part (used for resolution of identity)
-        polarizable_atoms  :  psi4.core.Molecule
+        polarizable_atoms   :  psi4.core.Molecule
           polarizable atoms in MM part
-        point_charges      :  psi4.core.Molecule
+        point_charges       :  psi4.core.Molecule
           MM atoms which carry point charges
-        polarizabilities   :  dict
+        polarizabilities    :  dict
           dictionary with atomic polarizabilities for each atom type
         same_site_integrals :  str
           'exact' - use analytically exact polarization integrals whenever possible
           'R.I.'  - treat all integrals on the same footing by using the resolution of identity
           This only affects the 1e part of the Hamiltonian.
+        dipole_damping      :  bool
+          The dipole polarizability may diverge for certain geometries, unless the dipole-dipole
+          interaction is damped at close distances (see eqn (7) in [Thole]). If True, the cutoff
+          function from [CPP] is used.
         """
         self.molecule = molecule
         self.basis = basis
@@ -114,7 +133,9 @@ class PolarizationHamiltonian(object):
         self.polarizabilities = polarizabilities
         print(f"same-site polarization integrals are treated by method '{same_site_integrals}'")
         self.same_site_integrals = same_site_integrals
-        
+        self.dipole_damping = dipole_damping
+        if dipole_damping:
+            print(f"dipole-dipole interaction is damped by cutoff-function")
         # number of polarizable sites
         self.npol = polarizable_atoms.natom()
         # number of basis functions
@@ -134,6 +155,10 @@ class PolarizationHamiltonian(object):
         self.F_elec = self._polarization_integrals_F()
         self.I_ee = self._polarization_integrals_I()
         self.F_nucl = self._nuclear_fields()
+
+        # If the polarizable atoms were replaced by a single polarizable site, what
+        # would be its polarizability tensor?
+        self._molecular_polarizability()
         
         # for resolution of identity we need the inverse of the overlap matrix
         mints_ri = core.MintsHelper(self.ribasis)
@@ -158,7 +183,7 @@ class PolarizationHamiltonian(object):
             alpha[i] = self.polarizabilities[self.polarizable_atoms.symbol(i)]
         return alpha
             
-    def _effective_polarizability(self):
+    def _effective_polarizability(self, dipole_damping=True):
         """
         build the effective polarizability matrix
 
@@ -171,6 +196,11 @@ class PolarizationHamiltonian(object):
           B = alpha   +  T
 
         It is not a polarizability in the strict sense of the word.
+
+        Parameters
+        ----------
+        dipole_damping  :  bool
+          If True, the dipole field tensor T(r) is replaced by `T(r) Cutoff(|r|)`
         """
         # cartesian coordinates of polarizable sites
         R = self.polarizable_atoms.geometry().np
@@ -186,10 +216,18 @@ class PolarizationHamiltonian(object):
                 if (i == j):
                     Tij = 1.0/self.alpha[i] * np.eye(3)
                 else:
+                    rvec = R[i,:]-R[j,:]
                     # polarizability tensor for interaction between two dipoles
                     # at sites i and j
-                    Tij = _T(R[i,:]-R[j,:])
+                    Tij = _T(rvec)
 
+                    # The dipole polarizability may diverge leading to the polarization catastrophe
+                    # unless the dipole-dipole interaction between point dipoles is damped.
+                    if dipole_damping:
+                        r = la.norm(rvec)
+                        cutoff = pow(1.0 - np.exp(-self.cutoff_alpha*r**2), self.cutoff_power)
+                        Tij *= cutoff
+                    
                 B[np.ix_(rows,cols)] = Tij
                 # B-matrix is symmetric
                 if (i != j):
@@ -199,6 +237,48 @@ class PolarizationHamiltonian(object):
         A = la.inv(B)
 
         return A
+        
+    def _molecular_polarizability(self):
+        """
+        The molecular polarizability tells us the total dipole moment induced
+        in a molecule by an external field. 
+
+          mu    =  alpha    E
+            tot         mol
+
+        see eqn. (6) in [Thole]
+        """
+        # The dipole moment mu(i)  induced on atom i by the fields E(j) at all atom j is
+        #
+        #    mu(i) = sum  A(i,j) E(j)
+        #               ij
+        # Assuming that the field is the same at all atom, E(i)=E, the total dipole moment is
+        #
+        #    mu(tot) = sum  mu(i) = sum   A(i,j)  E
+        #                 i            ij
+        #
+        # Therefore the molecular dipole polarizability is given by
+        #
+        # alpha_mol = sum_ij A(i,j).
+        #
+        alpha_mol = np.zeros((3,3))
+        for i in range(0, self.npol):
+            for j in range(0, self.npol):
+                alpha_mol += self.A[3*i:3*(i+1),3*j:3*(j+1)]
+
+        # abbreviation
+        a = alpha_mol
+        print(f""" 
+
+   Total dipole polarizability alpha_mol of MM part (in bohr^3)
+
+               X        Y        Z
+        X  {a[0,0]:+8.4f} {a[0,1]:+8.4f} {a[0,2]:+8.4f} 
+        Y  {a[1,0]:+8.4f} {a[1,1]:+8.4f} {a[1,2]:+8.4f} 
+        Y  {a[2,0]:+8.4f} {a[2,1]:+8.4f} {a[2,2]:+8.4f} 
+        """)
+
+        return alpha_mol
         
     def _polarization_integrals_F(self):
         """
@@ -287,7 +367,9 @@ class PolarizationHamiltonian(object):
             for n in range(0, self.molecule.natom()):
                 Qn = self.molecule.Z(n)
                 Rn = Rnuc[n,:]
-                Fi += Qn * (R[i,:] - Rn)/pow(la.norm(R[i,:] - Rn), 3)
+                rvec = R[i,:] - Rn
+                r = la.norm(rvec)
+                Fi += Qn * rvec/pow(r,3)
 
 
             # add fields from other point charges
@@ -296,8 +378,9 @@ class PolarizationHamiltonian(object):
                 for n in range(0, self.point_charges.natom()):
                     Qn = self.point_charges.charge(n)
                     Rn = Rchrg[n,:]
-                    Fi += Qn * (R[i,:] - Rn)/pow(la.norm(R[i,:] - Rn), 3)
-
+                    rvec = R[i,:] - Rn
+                    r = la.norm(rvec)
+                    Fi += Qn * rvec/pow(r,3)
 
             F[3*i:3*(i+1)] = Fi
 
@@ -392,6 +475,12 @@ class PolarizationHamiltonian(object):
           V   = (a|h   |b) = - F    A  F     - 1/2 sum    (S  )    F    A  F
            ab                           ab            cd       cd   ac      db
 
+                             -1     (e)        (e)                        (ee)
+            +  [ 1/2 sum   (S  )   F    alpha F     -  1/2 sum  alpha(i) I    (R ) ]
+                        cd      cd  ac         db             i           ab    i
+
+        The term in braces [ ... ] is only added if exact integrals are requested for
+        same-site polarization integrals.
 
         Returns
         -------
