@@ -77,7 +77,8 @@ def _T(rvec):
 
 class PolarizationHamiltonian(object):
     def __init__(self, molecule, basis, ribasis, polarizable_atoms, point_charges,
-                 polarizabilities=_theoretical_polarizabilities):
+                 polarizabilities=_theoretical_polarizabilities,
+                 same_site_integrals='exact'):
         """
         two-electron, one-electron and zero-electron contributions to electronic
         Hamiltonian due to the presence of polarizable sites
@@ -96,6 +97,10 @@ class PolarizationHamiltonian(object):
           MM atoms which carry point charges
         polarizabilities   :  dict
           dictionary with atomic polarizabilities for each atom type
+        same_site_integrals :  str
+          'exact' - use analytically exact polarization integrals whenever possible
+          'R.I.'  - treat all integrals on the same footing by using the resolution of identity
+          This only affects the 1e part of the Hamiltonian.
         """
         self.molecule = molecule
         self.basis = basis
@@ -107,7 +112,9 @@ class PolarizationHamiltonian(object):
         self.point_charges = point_charges
         
         self.polarizabilities = polarizabilities
-
+        print(f"same-site polarization integrals are treated by method '{same_site_integrals}'")
+        self.same_site_integrals = same_site_integrals
+        
         # number of polarizable sites
         self.npol = polarizable_atoms.natom()
         # number of basis functions
@@ -122,15 +129,35 @@ class PolarizationHamiltonian(object):
         
         # compute quantities needed for constructing two-electron, one-electron and zero-electron
         # contributions to the Hamiltonian due to the presence of polarizable atoms
+        self.alpha = self._atomic_polarizabilities()
         self.A = self._effective_polarizability()
-        self.F_elec = self._polarization_integrals()
+        self.F_elec = self._polarization_integrals_F()
+        self.I_ee = self._polarization_integrals_I()
         self.F_nucl = self._nuclear_fields()
         
         # for resolution of identity we need the inverse of the overlap matrix
         mints_ri = core.MintsHelper(self.ribasis)
         S = mints_ri.ao_overlap()
         self.Sinv = la.inv(S)
-        
+
+    def _atomic_polarizabilities(self):
+        """
+        assemble vector of atomic polarizabilities
+
+          alpha = (alpha , ..., alpha , ..., alpha    )
+                        1            i            npol
+
+        Returns
+        -------
+        alpha   :  np.ndarray (Npol,)
+          atomic polarizabilities in bohr^3
+        """
+        alpha = np.zeros(self.npol)
+        for i in range(0, self.npol):
+            # atomic dipole polarizability of site i
+            alpha[i] = self.polarizabilities[self.polarizable_atoms.symbol(i)]
+        return alpha
+            
     def _effective_polarizability(self):
         """
         build the effective polarizability matrix
@@ -157,10 +184,7 @@ class PolarizationHamiltonian(object):
                 cols = np.arange(3*j,3*(j+1))
 
                 if (i == j):
-                    # atomic dipole polarizability of site i
-                    alpha = self.polarizabilities[self.polarizable_atoms.symbol(i)]
-                    
-                    Tij = 1.0/alpha * np.eye(3)
+                    Tij = 1.0/self.alpha[i] * np.eye(3)
                 else:
                     # polarizability tensor for interaction between two dipoles
                     # at sites i and j
@@ -176,7 +200,7 @@ class PolarizationHamiltonian(object):
 
         return A
         
-    def _polarization_integrals(self):
+    def _polarization_integrals_F(self):
         """
         form the vector of Nbf x Nbf matrices
 
@@ -211,12 +235,35 @@ class PolarizationHamiltonian(object):
 
         return F
 
+    def _polarization_integrals_I(self):
+        """
+        form the vector of Nbf x Nbf matrices
+
+           (ee)
+          I    = ( I  (R1), ..., I  (Ri), ..., I  (R_npol) )          Npol x Nbf x Nbf
+                    mn            mn            mn
+
+        with the polarization integrals 
+                          1                 2
+          I  (R) = (m| ------- Cutoff(|r-R|)  |n)         Nbf x Nbf
+           mn          |r-R|^4
+        """
+        # cartesian coordinates of polarizable sites
+        R = self.polarizable_atoms.geometry().np
+        # I^{(ee)}(R(i)) = I[i,:,:]
+        I = np.zeros((self.npol,self.nbf, self.nbf))
+        for i in range(0, self.npol):
+            I[i,:,:] = self.mints.ao_polarization(R[i,:],
+                                                  4, 0,0,0, # k=4, mx=my=mz=0,
+                                                  self.cutoff_alpha, 2*self.cutoff_power)
+        return I
+    
     def _nuclear_fields(self):
         """
         form the vector 
 
             (nuclear)
-           F          = ( F(R1), F(R2), ..., F(R_npol) )        dimension: (3 Nol)
+           F          = ( F(R1), F(R2), ..., F(R_npol) )        dimension: (3 Npol)
 
         with
                            R - R_n 
@@ -345,6 +392,7 @@ class PolarizationHamiltonian(object):
           V   = (a|h   |b) = - F    A  F     - 1/2 sum    (S  )    F    A  F
            ab                           ab            cd       cd   ac      db
 
+
         Returns
         -------
         V    :    np.ndarray (Nbf x Nbf)
@@ -355,6 +403,15 @@ class PolarizationHamiltonian(object):
         SinvF = np.einsum('cd,idb->icb', self.Sinv, self.F_elec)
         Vee = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, self.A, SinvF)
 
+        if self.same_site_integrals == "exact":
+            # only i=j terms with resolution of identity
+            Vee_ii_ri    = -0.5 * np.einsum('iac,i,icb->ab', self.F_elec, self.alpha.repeat(3), SinvF)
+            # only i=j terms computed using exact integrals
+            Vee_ii_exact = -0.5 * np.einsum('i,iab->ab', self.alpha, self.I_ee)
+            # subtract out i=j terms that were treated with resolution of identity
+            # and replace them by the exact integrals
+            Vee += -Vee_ii_ri + Vee_ii_exact
+            
         V = Vne + Vee
 
         return V
@@ -408,8 +465,7 @@ class SCFNotConverged(Exception):
 class RHF_QMMM2ePol(object):
     def __init__(self, molecule, polarizable_atoms, point_charges,
                  basis='cc-pVDZ',
-                 polarizabilities=_theoretical_polarizabilities,
-                 continue_anyway=False):
+                 continue_anyway=False, **kwds):
         """
         perform restricted Hartree-Fock calculation for a closed-shell molecule
         with the QM/MM-2e-pol Hamiltonian. Polarizable atoms are incorporated
@@ -427,11 +483,11 @@ class RHF_QMMM2ePol(object):
           additional point charges if present
         basis             : str or psi4.core.BasisSet
           name of basis set, e.g. 'cc-pVDZ', or basis set object
-        polarizabilities  : dict
-          dictionary with atomic polarizabilities for each atom type
         continue_anyway   :  bool
           If True, no error is raised if the SCF cycle does not converge. 
           For an FCI calculation any orthonormal basis of orbitals will do.
+
+        The other keywords **kwds are passed to the `PolarizationHamiltonian` constructor 
         """
         # RHF adapted from https://github.com/humeniuka/psi4numpy/tree/master/Self-Consistent-Field
         import time
@@ -454,7 +510,7 @@ class RHF_QMMM2ePol(object):
         if polarizable_atoms.natom() > 0:
             polham = PolarizationHamiltonian(molecule, basis, ribasis,
                                              polarizable_atoms, point_charges,
-                                             polarizabilities=polarizabilities)
+                                             **kwds)
         else:
             polham = None
 
@@ -813,7 +869,8 @@ if __name__ == "__main__":
     
     # run closed-shell SCF calculation
     rhf = RHF_QMMM2ePol(molecule, polarizable_atoms, point_charges,
-                        basis='cc-pVDZ')
+                        basis='cc-pVDZ',
+                        same_site_integrals='exact') # 'R.I.'
     SCF_E = rhf.energy
     print('Final QMMM-2e-pol SCF energy : %.8f Hartree' % SCF_E)
 
