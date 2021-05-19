@@ -932,7 +932,7 @@ class RHF_QMMM2ePol(object):
             
         return h0, h1, h2
                 
-    def fcidump(self, filename="/tmp/hamiltonian.FCIDUMP",
+    def fcidump(self, filename="/tmp/hamiltonian.FCIDUMP", frozen_core=True,
                 MS2=0, NROOT=1, ISYM=1, **kwds):
         """
         save matrix elements of Hamiltonian in MO basis in the format understood
@@ -945,8 +945,10 @@ class RHF_QMMM2ePol(object):
 
         Parameters
         ----------
-        filename   :  str
+        filename      :  str
           path to FCIDUMP output file
+        frozen_core   :  bool
+          If True, 1s core orbitals are replaced by an effective Hamiltonian
 
         Additional variables for the header of the FCI programm can be 
         specified as keywords. See section 3.3.1 in [FCI] for a list of 
@@ -965,7 +967,7 @@ class RHF_QMMM2ePol(object):
         import fortranformat
         formatter=fortranformat.FortranRecordWriter('(E24.16,I4,I4,I4,I4/)')
         
-        h0, h1, h2 = self.hamiltonian_MO()
+        h0, h1, h2 = self.hamiltonian_MO(frozen_core=frozen_core)
         with open(filename, "w") as f:
             # header
             f.write(f"$FCI NORB={self.nmo-self.ncore},NELEC={self.nelec-2*self.ncore},\n")
