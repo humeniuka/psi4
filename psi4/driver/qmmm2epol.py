@@ -93,7 +93,7 @@ def _T(rvec):
 class PolarizationHamiltonian(object):
     def __init__(self, molecule, basis, ribasis, polarizable_atoms, point_charges,
                  polarizabilities=_theoretical_polarizabilities,
-                 same_site_integrals='exact',
+                 same_site_integrals='auto',
                  dipole_damping='Thole',
                  monopole_damping='Thole'):
         """
@@ -117,6 +117,7 @@ class PolarizationHamiltonian(object):
         same_site_integrals :  str
           'exact' - use analytically exact polarization integrals whenever possible
           'R.I.'  - treat all integrals on the same footing by using the resolution of identity
+          'auto'  - use 'exact' if there is only a single polarizable site and 'R.I.' for multiple polarizable sites
           This only affects the 1e part of the Hamiltonian.
         dipole_damping      :  str
           The classical dipole polarizability may diverge for certain geometries, unless the dipole-dipole
@@ -136,22 +137,30 @@ class PolarizationHamiltonian(object):
         self.basis = basis
         # auxiliary basis set for resolution of identity
         self.ribasis = ribasis
+
+        # number of polarizable sites
+        self.npol = polarizable_atoms.natom()
+        # number of basis functions
+        self.nbf = self.basis.nbf()
         
         self.polarizable_atoms = polarizable_atoms
         assert self.polarizable_atoms.natom() > 0, "No polarizable atoms specified"
         self.point_charges = point_charges
         
         self.polarizabilities = polarizabilities
+        if same_site_integrals == 'auto':
+            if self.npol == 1:
+                # use exact integrals for a single polarizable site
+                same_site_integrals = 'exact'
+            else:
+                # use R.I. for all other cases
+                same_site_integrals = 'R.I.'
         print(f"same-site polarization integrals are treated by method : '{same_site_integrals}'")
         self.same_site_integrals = same_site_integrals
         self.dipole_damping = dipole_damping
         print(f"damping of dipole-dipole interaction : {dipole_damping}")
         self.monopole_damping = monopole_damping
         print(f"damping of monopole field            : {monopole_damping}")
-        # number of polarizable sites
-        self.npol = polarizable_atoms.natom()
-        # number of basis functions
-        self.nbf = self.basis.nbf()
 
         # cutoff function C(r) = (1- exp(-alpha r^2))^q
         self.cutoff_alpha = 4.0
