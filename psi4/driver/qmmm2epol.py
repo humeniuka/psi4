@@ -559,7 +559,7 @@ class PolarizationHamiltonian(object):
 
         if self.same_site_integrals == "exact":
             # only i=j terms with resolution of identity
-            Vee_ii_ri    = -0.5 * np.einsum('iac,i,icb->ab', self.F_elec, self.alpha.repeat(3), SinvF)
+            Vee_ii_ri    = -0.5 * np.einsum('iac,ii,icb->ab', self.F_elec, self.A, SinvF)
             # only i=j terms computed using exact integrals
             Vee_ii_exact = -0.5 * np.einsum('i,iab->ab', self.alpha, self.I_ee)
             # subtract out i=j terms that were treated with resolution of identity
