@@ -540,9 +540,9 @@ class PolarizationHamiltonian(object):
           V   = (a|h   |b) = - F    A  F     - 1/2 sum    (S  )    F    A  F
            ab                           ab            cd       cd   ac      db
 
-                             -1     (e)        (e)                        (ee)
-            +  [ 1/2 sum   (S  )   F    alpha F     -  1/2 sum  alpha(i) I    (R ) ]
-                        cd      cd  ac         db             i           ab    i
+                             -1     (e)            (e)                        (ee)
+            +  [ 1/2 sum   (S  )   F    diag  (A) F     -  1/2 sum  alpha(i) I    (R ) ]
+                        cd      cd  ac      3x3    db             i           ab    i
 
         The term in braces [ ... ] is only added if exact integrals are requested for
         same-site polarization integrals.
@@ -558,8 +558,11 @@ class PolarizationHamiltonian(object):
         Vee = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, self.A, SinvF)
 
         if self.same_site_integrals == "exact":
+            # only 3x3 blocks on the diagonal of A where i=j
+            blocks3x3ii = [self.A[i*3:(i+1)*3,:][:,i*3:(i+1)*3] for i in range(0, self.npol)]
+            Aii = sla.block_diag(*blocks3x3ii)
             # only i=j terms with resolution of identity
-            Vee_ii_ri    = -0.5 * np.einsum('iac,ii,icb->ab', self.F_elec, self.A, SinvF)
+            Vee_ii_ri    = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, Aii, SinvF)
             # only i=j terms computed using exact integrals
             Vee_ii_exact = -0.5 * np.einsum('i,iab->ab', self.alpha, self.I_ee)
             # subtract out i=j terms that were treated with resolution of identity
