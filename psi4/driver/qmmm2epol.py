@@ -558,12 +558,23 @@ class PolarizationHamiltonian(object):
         Vee = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, self.A, SinvF)
 
         if self.same_site_integrals == "exact":
+            # These integrals are not really exact, because it's assumed that the diagonal 3x3 blocks
+            # are diagonal themselves: 
+            #
+            #   A  = diag{alpha(i),alpha(i),alpha(i)}
+            #    ii
+            #
+            # However, this is not the case because A = (alpha^-1 + T)^{-1} and unless T=0 the
+            # diagonal can mix with the other blocks. The integrals are exact only if there is
+            # a single polarizable site.
+            
             # only 3x3 blocks on the diagonal of A where i=j
             blocks3x3ii = [self.A[i*3:(i+1)*3,:][:,i*3:(i+1)*3] for i in range(0, self.npol)]
             Aii = sla.block_diag(*blocks3x3ii)
             # only i=j terms with resolution of identity
             Vee_ii_ri    = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, Aii, SinvF)
-            # only i=j terms computed using exact integrals
+            # only i=j terms computed using exact integrals assuming Aii is equal to the
+            # isotropic atomic polarizability tensor.
             Vee_ii_exact = -0.5 * np.einsum('i,iab->ab', self.alpha, self.I_ee)
             # subtract out i=j terms that were treated with resolution of identity
             # and replace them by the exact integrals
