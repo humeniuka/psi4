@@ -93,7 +93,7 @@ def _T(rvec):
 class PolarizationHamiltonian(object):
     def __init__(self, molecule, basis, ribasis, polarizable_atoms, point_charges,
                  polarizabilities=_theoretical_polarizabilities,
-                 same_site_integrals='auto',
+                 same_site_integrals='exact',
                  dipole_damping='Thole',
                  monopole_damping='Thole'):
         """
@@ -117,7 +117,6 @@ class PolarizationHamiltonian(object):
         same_site_integrals :  str
           'exact' - use analytically exact polarization integrals whenever possible
           'R.I.'  - treat all integrals on the same footing by using the resolution of identity
-          'auto'  - use 'exact' if there is only a single polarizable site and 'R.I.' for multiple polarizable sites
           This only affects the 1e part of the Hamiltonian.
         dipole_damping      :  str
           The classical dipole polarizability may diverge for certain geometries, unless the dipole-dipole
@@ -148,13 +147,6 @@ class PolarizationHamiltonian(object):
         self.point_charges = point_charges
         
         self.polarizabilities = polarizabilities
-        if same_site_integrals == 'auto':
-            if self.npol == 1:
-                # use exact integrals for a single polarizable site
-                same_site_integrals = 'exact'
-            else:
-                # use R.I. for all other cases
-                same_site_integrals = 'R.I.'
         print(f"same-site polarization integrals are treated by method : '{same_site_integrals}'")
         self.same_site_integrals = same_site_integrals
         self.dipole_damping = dipole_damping
@@ -174,7 +166,8 @@ class PolarizationHamiltonian(object):
         self.alpha = self._atomic_polarizabilities()
         self.A = self._effective_polarizability()
         self.F_elec = self._polarization_integrals_F()
-        self.I_ee = self._polarization_integrals_I()
+        if (self.same_site_integrals == 'exact'):
+            self.I_1e = self._polarization_integrals_I()
         self.F_nucl = self._nuclear_fields()
 
         # If the polarizable atoms were replaced by a single polarizable site, what
@@ -268,7 +261,7 @@ class PolarizationHamiltonian(object):
                 # B-matrix is symmetric
                 if (i != j):
                     B[np.ix_(cols,rows)] = Tij
-
+                    
         # invert B to get "effective polarizability"
         A = la.inv(B)
 
@@ -353,25 +346,54 @@ class PolarizationHamiltonian(object):
 
     def _polarization_integrals_I(self):
         """
-        form the vector of Nbf x Nbf matrices
+        form the vector of 3 x 3 x Nbf x Nbf tensors
 
-           (ee)
-          I    = ( I  (R1), ..., I  (Ri), ..., I  (R_npol) )          Npol x Nbf x Nbf
-                    mn            mn            mn
-
+           ab       ab            ab            ab                                 
+          I    = ( I  (R1), ..., I  (Ri), ..., I  (R_npol) )        Npol x 3 x 3 x Nbf x Nbf
+           mn       mn            mn            mn
+                                                        Indices:     i     a   b   m     n
+        
+                                                        Meanin:     pol.   cart.     AOs
+                                                                    site   comp.
         with the polarization integrals 
-                          1                 2
-          I  (R) = (m| ------- Cutoff(|r-R|)  |n)         Nbf x Nbf
-           mn          |r-R|^4
+
+           ab          (r_a - R_a)(r_b - R_b)              2
+          I  (R) = (m| ---------------------- Cutoff(|r-R|)  |n)       3 x 3 x Nbf x Nbf
+           mn                |r-R|^6
         """
         # cartesian coordinates of polarizable sites
         R = self.polarizable_atoms.geometry().np
-        # I^{(ee)}(R(i)) = I[i,:,:]
-        I = np.zeros((self.npol,self.nbf, self.nbf))
+        # I^{ab}_{mn}(R(i)) = I[i,a,b,m,n]
+        I = np.zeros((self.npol,3,3,self.nbf, self.nbf))
         for i in range(0, self.npol):
-            I[i,:,:] = self.mints.ao_polarization(R[i,:],
-                                                  4, 0,0,0, # k=4, mx=my=mz=0,
-                                                  self.cutoff_alpha, 2*self.cutoff_power)
+            # x^2/r^6
+            I[i,0,0,:,:] = self.mints.ao_polarization(R[i,:],
+                                                      6, 2,0,0, # k=6, mx=2,my=0,mz=0,
+                                                      self.cutoff_alpha, 2*self.cutoff_power)
+            # y^2/r^6
+            I[i,1,1,:,:] = self.mints.ao_polarization(R[i,:],
+                                                      6, 0,2,0, # k=6, mx=0,my=2,mz=0,
+                                                      self.cutoff_alpha, 2*self.cutoff_power)
+            # z^2/r^6
+            I[i,2,2,:,:] = self.mints.ao_polarization(R[i,:],
+                                                      6, 0,0,2, # k=6, mx=0,my=0,mz=2,
+                                                      self.cutoff_alpha, 2*self.cutoff_power)
+            # xy/r^6
+            I[i,0,1,:,:] = self.mints.ao_polarization(R[i,:],
+                                                      6, 1,1,0, # k=6, mx=1,my=1,mz=0,
+                                                      self.cutoff_alpha, 2*self.cutoff_power)
+            I[i,1,0,:,:] = I[i,0,1,:,:]
+            # xz/r^6
+            I[i,0,2,:,:] = self.mints.ao_polarization(R[i,:],
+                                                      6, 1,0,1, # k=6, mx=1,my=0,mz=1,
+                                                      self.cutoff_alpha, 2*self.cutoff_power)
+            I[i,2,0,:,:] = I[i,0,2,:,:]
+            # yz/r^6
+            I[i,1,2,:,:] = self.mints.ao_polarization(R[i,:],
+                                                      6, 0,1,1, # k=6, mx=0,my=1,mz=1,
+                                                      self.cutoff_alpha, 2*self.cutoff_power)
+            I[i,2,1,:,:] = I[i,1,2,:,:]
+            
         return I
     
     def _nuclear_fields(self):
@@ -538,8 +560,8 @@ class PolarizationHamiltonian(object):
         I     :   np.ndarray (Nbf x Nbf x Nbf x Nbf)
           matrix elements of two-electron part of polarization Hamiltonian
         """
-        I = -np.einsum('iab,ij,jcd->abcd', self.F_elec, self.A, self.F_elec)
-        return I
+        I_2e = -np.einsum('iab,ij,jcd->abcd', self.F_elec, self.A, self.F_elec)
+        return I_2e
 
     def one_electron_part(self):
         """
@@ -549,9 +571,9 @@ class PolarizationHamiltonian(object):
           V   = (a|h   |b) = - F    A  F     - 1/2 sum    (S  )    F    A  F
            ab                           ab            cd       cd   ac      db
 
-                             -1     (e)            (e)                        (ee)
-            +  [ 1/2 sum   (S  )   F    diag  (A) F     -  1/2 sum  alpha(i) I    (R ) ]
-                        cd      cd  ac      3x3    db             i           ab    i
+                             -1     (e)            (e)                      uv  uv  
+            +  [ 1/2 sum   (S  )   F    diag  (A) F     -  1/2 sum  sum    A   I    (R )  ]
+                        cd      cd  ac      3x3    db             i    uv   ii  ab    i
 
         The term in braces [ ... ] is only added if exact integrals are requested for
         same-site polarization integrals.
@@ -567,24 +589,13 @@ class PolarizationHamiltonian(object):
         Vee = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, self.A, SinvF)
 
         if self.same_site_integrals == "exact":
-            # These integrals are not really exact, because it's assumed that the diagonal 3x3 blocks
-            # are diagonal themselves: 
-            #
-            #   A  = diag{alpha(i),alpha(i),alpha(i)}
-            #    ii
-            #
-            # However, this is not the case because A = (alpha^-1 + T)^{-1} and unless T=0 the
-            # diagonal can mix with the other blocks. The integrals are exact only if there is
-            # a single polarizable site.
-            
-            # only 3x3 blocks on the diagonal of A where i=j
-            blocks3x3ii = [self.A[i*3:(i+1)*3,:][:,i*3:(i+1)*3] for i in range(0, self.npol)]
-            Aii = sla.block_diag(*blocks3x3ii)
+            # only 3x3 blocks on the diagonal of A where i=j, shape(Aii) = (npol,3,3)
+            Aii = np.array([self.A[i*3:(i+1)*3,:][:,i*3:(i+1)*3] for i in range(0, self.npol)])
             # only i=j terms with resolution of identity
-            Vee_ii_ri    = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, Aii, SinvF)
+            Vee_ii_ri    = -0.5 * np.einsum('iac,ij,jcb->ab', self.F_elec, sla.block_diag(*Aii), SinvF)
             # only i=j terms computed using exact integrals assuming Aii is equal to the
             # isotropic atomic polarizability tensor.
-            Vee_ii_exact = -0.5 * np.einsum('i,iab->ab', self.alpha, self.I_ee)
+            Vee_ii_exact = -0.5 * np.einsum('iuv,iuvab->ab', Aii, self.I_1e)
             # subtract out i=j terms that were treated with resolution of identity
             # and replace them by the exact integrals
             Vee += -Vee_ii_ri + Vee_ii_exact
