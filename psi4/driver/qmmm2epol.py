@@ -353,7 +353,7 @@ class PolarizationHamiltonian(object):
            mn       mn            mn            mn
                                                         Indices:     i     a   b   m     n
         
-                                                        Meanin:     pol.   cart.     AOs
+                                                        Meaning:    pol.   cart.     AOs
                                                                     site   comp.
         with the polarization integrals 
 
