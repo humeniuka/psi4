@@ -112,6 +112,9 @@ class PolarizationHamiltonian(object):
           polarizable atoms in MM part
         point_charges       :  psi4.core.Molecule
           MM atoms which carry point charges
+          The values of the point charges can be set via 
+          `point_charges.set_nuclear_charge(atom_id, charge)`
+
         polarizabilities    :  dict
           dictionary with atomic polarizabilities for each atom type
         same_site_integrals :  str
@@ -454,7 +457,9 @@ class PolarizationHamiltonian(object):
             if (self.point_charges.natom() > 0):
                 Rchrg = self.point_charges.geometry().np
                 for n in range(0, self.point_charges.natom()):
-                    Qn = self.point_charges.charge(n)
+                    # The charge of a point charge can be modified via
+                    #   point_charges.set_nuclear_charge(atom_id, charge)
+                    Qn = self.point_charges.Z(n)
                     Rn = Rchrg[n,:]
                     rvec = R[i,:] - Rn
                     r = la.norm(rvec)
