@@ -732,7 +732,7 @@ class RHF_QMMM2ePol(object):
         X = la.inv(Xinv)
 
         # Initialize the JK object
-        jk = psi4.core.JK.build(basis, jk_type="DF")
+        jk = psi4.core.JK.build(basis, jk_type="PK")
         jk.set_memory(int(1.25e8))  # 1GB
         jk.initialize()
         jk.print_header()
