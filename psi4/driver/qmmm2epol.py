@@ -826,6 +826,8 @@ class RHF_QMMM2ePol(object):
 
         # store QM geometry
         self.molecule = molecule
+        # and basis set
+        self.basis = basis
         # number of atomic and molecular orbitals
         self.nao, self.nmo = C.shape
         # number of electrons
@@ -835,6 +837,8 @@ class RHF_QMMM2ePol(object):
         self.jk = jk
         # MO coefficients
         self.C = C
+        # MO energies
+        self.epsilon = e
         # Hcore
         self.H = H
         # overlap matrix
@@ -852,7 +856,7 @@ class RHF_QMMM2ePol(object):
         total SCF energy (in Hartree)
         """
         return self.SCF_E
-
+    
     def _frozen_core_approximation(self, Ccore):
         """
         compute frozen core energy and core-valence Hamiltonian
