@@ -93,6 +93,7 @@ def _T(rvec):
 class PolarizationHamiltonian(object):
     def __init__(self, molecule, basis, ribasis, polarizable_atoms, point_charges,
                  polarizabilities=_theoretical_polarizabilities,
+                 cutoff_alpha=4.0,
                  same_site_integrals='exact',
                  dipole_damping='Thole',
                  monopole_damping='Thole'):
@@ -117,6 +118,8 @@ class PolarizationHamiltonian(object):
 
         polarizabilities    :  dict
           dictionary with atomic polarizabilities for each atom type
+        cutoff_alpha        :  float
+          exponent alpha in cutoff function C(r)=(1-exp(-alpha r^2))^q
         same_site_integrals :  str
           'exact' - use analytically exact polarization integrals whenever possible
           'R.I.'  - treat all integrals on the same footing by using the resolution of identity
@@ -158,7 +161,7 @@ class PolarizationHamiltonian(object):
         print(f"damping of monopole field            : {monopole_damping}")
 
         # cutoff function C(r) = (1- exp(-alpha r^2))^q
-        self.cutoff_alpha = 4.0
+        self.cutoff_alpha = cutoff_alpha
         self.cutoff_power = 2
 
         # integrals
