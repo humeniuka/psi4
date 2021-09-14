@@ -406,7 +406,7 @@ class PolarizationHamiltonian(object):
 
         with
                            R - R_n 
-           F(R) = sum Q  -----------
+           F(R) = sum Q  ----------- C(|R - R_n|)
                    n   n |R - R_n|^3
 
         where Q_n are all point charges
@@ -449,6 +449,12 @@ class PolarizationHamiltonian(object):
                     # undamped field of a monopole
                     dFn = Qn * rvec/pow(r,3)
 
+                # The nuclear fields have to be damped by the same cutoff function as the electronic fields.
+                # Otherwise the fields from protons and electrons do not cancel at long range as
+                # expected for a neutral molecule.
+                cutoff = pow(1.0 - np.exp(-self.cutoff_alpha * r**2), self.cutoff_power)
+                dFn *= cutoff
+                
                 Fi += dFn
 
             # add fields from other point charges
@@ -478,6 +484,12 @@ class PolarizationHamiltonian(object):
                     else:
                         # undamped field of a monopole
                         dFn = Qn * rvec/pow(r,3)
+
+                    # The nuclear fields have to be damped by the same cutoff function as the electronic fields.
+                    # Otherwise the fields from protons and electrons do not cancel at long range as
+                    # expected for a neutral molecule.
+                    cutoff = pow(1.0 - np.exp(-self.cutoff_alpha * r**2), self.cutoff_power)
+                    dFn *= cutoff
 
                     Fi += dFn
 
@@ -656,7 +668,7 @@ class SCFNotConverged(Exception):
 class RHF_QMMM2ePol(object):
     def __init__(self, molecule, polarizable_atoms, point_charges,
                  basis='cc-pVDZ',
-                 continue_anyway=False, **kwds):
+                 continue_anyway=False, qmmm=False, **kwds):
         """
         perform restricted Hartree-Fock calculation for a closed-shell molecule
         with the QM/MM-2e-pol Hamiltonian. Polarizable atoms are incorporated
@@ -677,6 +689,9 @@ class RHF_QMMM2ePol(object):
         continue_anyway   :  bool
           If True, no error is raised if the SCF cycle does not converge. 
           For an FCI calculation any orthonormal basis of orbitals will do.
+        qmmm              :  bool
+          If True, the electrostatic potential from the point charges is added to the
+          core Hamiltonian (electrostatic embedding)
 
         The other keywords **kwds are passed to the `PolarizationHamiltonian` constructor 
         """
@@ -707,12 +722,44 @@ class RHF_QMMM2ePol(object):
 
         mints = psi4.core.MintsHelper(basis)
 
+        # nuclear energy
+        Enuc = molecule.nuclear_repulsion_energy()
+
         # Build H_core
         V = mints.ao_potential().np
         T = mints.ao_kinetic().np
         H = V + T
-        # nuclear energy
-        Enuc = molecule.nuclear_repulsion_energy()
+        # QM/MM electrostatic embedding
+        if (qmmm == True):
+            # Apparently there is a bug (or at least inconsistency) in psi4's way of computing
+            # the external potential due to point charges. It checks the units of the molecule
+            # and converts the positions of the point charges to Bohr. However, this conversion
+            # seems to have already happened at an earlier stage. Therefore we have to set the units 
+            # temporarily to Bohr.
+            units = point_charges.units()
+            point_charges.set_units(psi4.core.GeometryUnits.Bohr)
+
+            # potential matrix due to point charges
+            Vext = self._electrostatic_embedding(point_charges, basis).np
+
+            # revert to previous units if needed
+            if (units == "Angstrom"):
+                point_charges.set_units(psi4.core.GeometryUnits.Angstrom)
+
+            # add external potential to core Hamiltonian
+            H += Vext
+
+            """
+            # add repulsion between point charges to nuclear energy
+            # need to use exclusion list !!!
+            for i in range(0, point_charges.natom()):
+                Ri = point_charges.xyz(i)
+                Zi = point_charges.Z(i)
+                for j in range(i+1, point_charges.natom()):
+                    Rj = point_charges.xyz(j)
+                    Zj = point_charges.Z(j)
+                    Enuc += Zi*Zj/Ri.distance(Rj)
+            """
 
         if not polham is None:
             # add one-electron part of polarization potential to core Hamiltonian
@@ -811,11 +858,11 @@ class RHF_QMMM2ePol(object):
             Cocc = C[:,:ndocc]
             # density matrix in AO basis
             D = 2 * np.einsum('ai,bi->ab', Cocc, Cocc)
-            #print("number of lectrons = ", np.sum(D*S))
+            #print("number of electrons = ", np.sum(D*S))
 
             # Is the density matrix idempotent ?
             err = 0.5*D - (0.5*D).dot(S).dot(0.5*D)
-            assert la.norm(err) < 1.0e-10, "Density matrix not idempotent, |D - D.S.D| > 0"
+            assert la.norm(err) < 1.0e-10, f"Density matrix not idempotent, |D - D.S.D| = {err} > 0"
 
             if SCF_ITER == maxiter:
                 if continue_anyway == False:
@@ -835,6 +882,18 @@ class RHF_QMMM2ePol(object):
         self.jk = jk
         # MO coefficients
         self.C = C
+        # MO energies
+        self.e = e
+        # number of doubly occupied orbitals
+        self.ndocc = ndocc
+        # kinetic energy operator
+        self.T = T
+        # electron-nuclear attraction
+        self.V = V
+        # 1e part of polarization Hamiltonian
+        self.Vpol = Vpol
+        # external point charges
+        self.Vext = Vext
         # Hcore
         self.H = H
         # overlap matrix
@@ -852,6 +911,27 @@ class RHF_QMMM2ePol(object):
         total SCF energy (in Hartree)
         """
         return self.SCF_E
+
+    def _electrostatic_embedding(self, point_charges, basis):
+        """
+        the electrostatic potential matrix due to the point charges
+
+           (ext)              Qc
+          V      =  sum  <i|------|j>
+           ij        c      |r-Rc|
+
+        The point charge must have been set with 
+        `point_charges.set_nuclear_charge(atom_idx, Qc)`
+        """
+        epot = core.ExternalPotential()
+        for i in range(0, point_charges.natom()):
+            epot.addCharge(point_charges.Z(i),
+                           point_charges.x(i),
+                           point_charges.y(i),
+                           point_charges.z(i))
+        Vext = epot.computePotentialMatrix(basis)
+        return Vext
+                           
 
     def _frozen_core_approximation(self, Ccore):
         """
