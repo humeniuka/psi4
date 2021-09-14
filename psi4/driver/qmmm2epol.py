@@ -892,10 +892,12 @@ class RHF_QMMM2ePol(object):
         self.T = T
         # electron-nuclear attraction
         self.V = V
-        # 1e part of polarization Hamiltonian
-        self.Vpol = Vpol
-        # external point charges
-        self.Vext = Vext
+        if not polham is None:
+            # 1e part of polarization Hamiltonian
+            self.Vpol = Vpol
+        if (qmmm == True):
+            # external point charges
+            self.Vext = Vext
         # Hcore
         self.H = H
         # overlap matrix
