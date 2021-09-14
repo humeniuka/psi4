@@ -873,6 +873,8 @@ class RHF_QMMM2ePol(object):
 
         # store QM geometry
         self.molecule = molecule
+        # and basis set
+        self.basis = basis
         # number of atomic and molecular orbitals
         self.nao, self.nmo = C.shape
         # number of electrons
@@ -931,7 +933,6 @@ class RHF_QMMM2ePol(object):
                            point_charges.z(i))
         Vext = epot.computePotentialMatrix(basis)
         return Vext
-                           
 
     def _frozen_core_approximation(self, Ccore):
         """
