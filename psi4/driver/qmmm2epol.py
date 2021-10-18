@@ -96,7 +96,8 @@ class PolarizationHamiltonian(object):
                  cutoff_alpha=4.0,
                  same_site_integrals='exact',
                  dipole_damping='Thole',
-                 monopole_damping='Thole'):
+                 monopole_damping='Thole',
+                 verbose=1):
         """
         two-electron, one-electron and zero-electron contributions to electronic
         Hamiltonian due to the presence of polarizable sites
@@ -114,7 +115,7 @@ class PolarizationHamiltonian(object):
         point_charges       :  psi4.core.Molecule
           MM atoms which carry point charges
           The values of the point charges can be set via 
-          `point_charges.set_nuclear_charge(atom_id, charge)`
+          `point_charges.set_nuclearo_charge(atom_id, charge)`
 
         polarizabilities    :  dict
           dictionary with atomic polarizabilities for each atom type
@@ -137,7 +138,10 @@ class PolarizationHamiltonian(object):
           as the point charge and the polarizable atom fuse.
             * 'Thole'  - replace the field of a point charge by eqn. A4 in [Thole]
             * None     - use field of a point charge, E(i) = Q(i) * r(i)/r^3   (not recommended)
+        verbose             :  int
+          controls amount of output written, 0 - silent
         """
+        self.verbose = verbose
         self.molecule = molecule
         self.basis = basis
         # auxiliary basis set for resolution of identity
@@ -153,12 +157,15 @@ class PolarizationHamiltonian(object):
         self.point_charges = point_charges
         
         self.polarizabilities = polarizabilities
-        print(f"same-site polarization integrals are treated by method : '{same_site_integrals}'")
+        if (self.verbose > 0):
+            print(f"same-site polarization integrals are treated by method : '{same_site_integrals}'")
         self.same_site_integrals = same_site_integrals
         self.dipole_damping = dipole_damping
-        print(f"damping of dipole-dipole interaction : {dipole_damping}")
+        if (self.verbose > 0):
+            print(f"damping of dipole-dipole interaction : {dipole_damping}")
         self.monopole_damping = monopole_damping
-        print(f"damping of monopole field            : {monopole_damping}")
+        if (self.verbose > 0):
+            print(f"damping of monopole field            : {monopole_damping}")
 
         # cutoff function C(r) = (1- exp(-alpha r^2))^q
         self.cutoff_alpha = cutoff_alpha
@@ -298,7 +305,8 @@ class PolarizationHamiltonian(object):
 
         # abbreviation
         a = alpha_mol
-        print(f""" 
+        if self.verbose > 0:
+            print(f""" 
 
    Total dipole polarizability alpha_mol of MM part (in bohr^3)
 
@@ -862,7 +870,7 @@ class RHF_QMMM2ePol(object):
 
             # Is the density matrix idempotent ?
             err = 0.5*D - (0.5*D).dot(S).dot(0.5*D)
-            assert la.norm(err) < 1.0e-10, f"Density matrix not idempotent, |D - D.S.D| = {err} > 0"
+            assert la.norm(err) < 1.0e-8, f"Density matrix not idempotent, |D - D.S.D| = {la.norm(err)} > 0"
 
             if SCF_ITER == maxiter:
                 if continue_anyway == False:

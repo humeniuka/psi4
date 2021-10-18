@@ -63,3 +63,5 @@ def test_qmmm2epol():
 
     assert psi4.compare_values(SCF_E_reference, SCF_E, 6, "SCF QM/MM-2e-pol energy")
 
+if __name__ == "__main__":
+    test_qmmm2epol()
