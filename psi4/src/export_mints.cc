@@ -1093,7 +1093,32 @@ q            :    int
         .def("core_hamiltonian_grad", &MintsHelper::core_hamiltonian_grad,
              "First nuclear derivative T + V + Perturb integrals")
         .def("polarization_grad", &MintsHelper::polarization_grad, "First nuclear derivative polarization integrals")
+        .def("polarization_integrals_grad", &MintsHelper::polarization_integrals_grad, 
+	     R"LITERAL(
+First nuclear derivatives of the polarization integrals contracted with the density matrix D
 
+                       mx  my  mz
+                      x   y   z           - alpha r^2  q         
+  sum    { grad <AO | ----------- (1 - exp            )   |AO  > } D
+     i,j           i      r^k                                j      ij
+
+Parameters
+----------
+origin       :    list of 3 floats
+  Cartesian position of polarizable site to be used instead of the origin
+k, mx,my,mz  :    ints >= 0, k > 2
+  powers in the polarization operator `O(x,y,z) = x^mx * y^my * z^mz |r|^{-k}`
+alpha        :    float >> 0
+  exponent of cutoff function
+q            :    int
+  power of cutoff function
+D            :    matrix
+  generalized density matrix in the AO basis
+)LITERAL",
+	     "origin"_a,
+	     "k"_a, "mx"_a, "my"_a, "mz"_a,
+	     "alpha"_a, "q"_a,
+	     "D"_a)
         // First and second derivatives of one and two electron integrals in AO and MO basis.
         .def("ao_oei_deriv1", &MintsHelper::ao_oei_deriv1,
              "Gradient of AO basis OEI integrals: returns (3 * natoms) matrices", "oei_type"_a, "atom"_a)

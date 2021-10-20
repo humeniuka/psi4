@@ -4189,5 +4189,32 @@ SharedMatrix MintsHelper::ao_polarization(// position of polarizable atom
     return polarization_mat;
 }
 
+SharedMatrix MintsHelper::polarization_integrals_grad(// position of polarizable atom
+					    const std::vector<double> &origin,
+					    // operator    O(r) = x^mx y^my z^mz |r|^-k 
+					    int k, int mx, int my, int mz,
+					    // cutoff function F2(r) = (1 - exp(-alpha r^2))^q
+					    double alpha,  int q,
+					    // density matrix for contracting
+					    SharedMatrix D) {
+  // The matrix of gradients of polarization integrals is contracted with a generalized density matrix D:
+  //
+  //     [x]             [x]
+  //    g     = sum     I    D
+  //               m,n   m,n  m,n
+  //
+  // Gradients are w/r/t to the positions of the QM atoms carrying basis functions.
+  SharedMatrix grad(new Matrix("Gradient of Polarization Integrals", basisset_->molecule()->natom(), 3));
+
+  std::vector<std::shared_ptr<OneBodyAOInt>> ints_vec;
+  for (size_t i = 0; i < nthread_; i++) {
+    ints_vec.push_back(std::shared_ptr<OneBodyAOInt>(integral_->ao_polarization(origin, k, mx,my,mz, alpha, q, 1)));
+  }
+  grad_two_center_computer(ints_vec, D, grad);
+
+  return grad;
+}
+
+// end of QM/MM-2e-Pol
   
 }  // namespace psi

@@ -373,6 +373,17 @@ class PSI_API MintsHelper {
 				 // cutoff function F2(r) = (1 - exp(-alpha r^2))^q
 				 double alpha,  int q);
 
+    // Contraction of the gradient of the polarization integrals with a density matrix
+    // The return value is a gradient vector of size (Nat x 3).
+    SharedMatrix polarization_integrals_grad(// position of polarizable atom
+                                 const std::vector<double> &origin,
+				 // operator    O(r) = x^mx y^my z^mz |r|^-k 
+				 int k, int mx, int my, int mz,
+				 // cutoff function F2(r) = (1 - exp(-alpha r^2))^q
+				 double alpha,  int q,
+				 // density matrix in AO basis
+				 SharedMatrix D);
+
 };
 }  // namespace psi
 

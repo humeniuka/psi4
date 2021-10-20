@@ -17,6 +17,12 @@ from psi4.driver.qmmm2epol_io import amber2psi4
 
 @pytest.mark.smoke
 def test_qmmm2epol_gradients():
+    """
+    compare analytical and numerical gradients for the following terms of the polarization Hamiltonian:
+
+      * 0-electron part h^(0)
+
+    """
     # load QM and MM regions from AMBER files
     molecule, polarizable_atoms, point_charges, polarizabilities = amber2psi4('solvated.prmtop', 'solvated.rst7', 'solvated.qmregion')
     
@@ -32,6 +38,43 @@ def test_qmmm2epol_gradients():
 
     assert grad_comp.compare_gradients('zero_electron_part')
 
+def test_contracted_gradients():
+    """
+    check QM gradients of a contraction of polarization integrals F^(elec) with a (constant) density matrix 
+    """
+    # load QM and MM regions from AMBER files
+    molecule, polarizable_atoms, point_charges, polarizabilities = amber2psi4('solvated.prmtop', 'solvated.rst7', 'solvated.qmregion')
+    
+    # basis for QM atoms
+    wfn = psi4.core.Wavefunction.build(molecule, 'sto-3g')
+    basis = wfn.basisset()
+    ribasis = basis
+
+    polham_grad = PolarizationHamiltonianGradients(molecule, basis, ribasis,
+                                                   polarizable_atoms, point_charges,
+                                                   polarizabilities=polarizabilities,
+                                                   verbose=0)
+
+    nbf = polham_grad.nbf
+
+    # make random numbers reproducible
+    np.random.seed(101)
+    # random matrix D
+    D = np.random.rand(nbf, nbf)
+    # symmetrize matrix
+    D = 0.5 * (D + D.T)
+
+    grad_comp = GradientComparison(molecule, basis, ribasis,
+                                   polarizable_atoms, point_charges,
+                                   polarizabilities=polarizabilities,
+                                   verbose=0)
+
+    # compute analytical and numerical QM gradients and compare them
+    assert grad_comp.compare_contracted_gradients_F(D)
+    assert grad_comp.compare_contracted_gradients_I(D)
+    
+
 if __name__ == "__main__":
+    test_contracted_gradients()
     test_qmmm2epol_gradients()
 
