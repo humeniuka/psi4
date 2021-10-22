@@ -505,9 +505,9 @@ class PolarizationHamiltonian(object):
 
         return F
     
-    def coulomb_J(self, C_left, C_right):
+    def coulomb_J_(self, C_left, C_right):
         """
-        build Coulomb operator
+        build Coulomb operator from MO coefficients
 
                           (2)      
           J   = sum  (pq|h   |rs) D
@@ -537,9 +537,31 @@ class PolarizationHamiltonian(object):
         J = -np.einsum('iab,ij,j->ab', self.F_elec, self.A, FD)
         return J
 
-    def exchange_K(self, C_left, C_right):
+    def coulomb_J(self, D):
         """
-        build exchange operator
+        build Coulomb operator from density matrix
+
+                          (2)      
+          J   = sum  (pq|h   |rs) D
+           pq   r,s                rs
+
+        Parameters
+        ----------
+        D      :    np.ndarray    (Nbf x Nbf)
+          density matrix in AO basis
+
+        Returns
+        -------
+        J     :    np.ndarray    (Nbf x Nbf)
+          Coulomb operator in AO basis
+        """
+        FD = np.einsum('icd,cd->i', self.F_elec, D)
+        J = -np.einsum('iab,ij,j->ab', self.F_elec, self.A, FD)
+        return J
+
+    def exchange_K_(self, C_left, C_right):
+        """
+        build exchange operator from MO coefficients
 
                           (2)      
           K   = sum  (pr|h   |qs)  D
@@ -568,6 +590,29 @@ class PolarizationHamiltonian(object):
         FC_left = np.einsum('iag,gk->iak', self.F_elec, C_left)
         FC_right = np.einsum('jbd,dk->jbk', self.F_elec, C_right)
         K = -np.einsum('iak,ij,jbk->ab', FC_left, self.A, FC_right)
+        return K
+
+    def exchange_K(self, D):
+        """
+        build exchange operator from density matrix 
+
+                          (2)      
+          K   = sum  (pr|h   |qs)  D
+           pq   r,s                 rs
+
+        Parameters
+        ----------
+        D      :    np.ndarray    (Nbf x Nbf)
+          density matrix in AO basis
+
+        Returns
+        -------
+        K     :    np.ndarray    (Nbf x Nbf)
+          exchange operator in AO basis
+        """
+        FD = np.einsum('iac,cd->iad', self.F_elec, D)
+        AF = np.einsum('ij,jbd->ibd', self.A, self.F_elec)
+        K = -np.einsum('iad,ibd->ab', FD, AF)
         return K
         
     def two_electron_part(self):
@@ -823,9 +868,13 @@ class RHF_QMMM2ePol(object):
 
             # add (\Delta J) and (\Delta K) from polarization Hamiltonian
             if not polham is None:
-                J += polham.coulomb_J(Cocc, Cocc)
-                K += polham.exchange_K(Cocc, Cocc)
-                
+                J += polham.coulomb_J(0.5*D)
+                K += polham.exchange_K(0.5*D)
+                """
+                J += polham.coulomb_J_(Cocc, Cocc)
+                K += polham.exchange_K_(Cocc, Cocc)
+                """
+
             # Build Fock matrix in AO basis
             F = H + 2*J - K
 
@@ -980,8 +1029,12 @@ class RHF_QMMM2ePol(object):
         
         # add (\Delta J) and (\Delta K) from polarization Hamiltonian
         if not self.polham is None:
-            J += self.polham.coulomb_J(Ccore, Ccore)
-            K += self.polham.exchange_K(Ccore, Ccore)
+            J += self.polham.coulomb_J(0.5*Dcore)
+            K += self.polham.exchange_K(0.5*Dcore)
+            """
+            J += self.polham.coulomb_J_(Ccore, Ccore)
+            K += self.polham.exchange_K_(Ccore, Ccore)
+            """
 
         # Fock matrix constructed only from the density of the core electrons
         # F[Dcore]

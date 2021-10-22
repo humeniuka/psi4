@@ -479,3 +479,118 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
             gradID_POL[3*i:3*(i+1), 2,1] = gradID_POL[3*i:3*(i+1), 1,2]
 
         return gradID_QM, gradID_POL
+
+    def zero_electron_part_GRAD(self):
+        """
+        gradient of zero-electron (nuclear/point charges) part of polarization Hamiltonian
+        
+         d h^(0)
+         -------
+           dx
+
+        Since nuclei and point charges are kept separately there is also a gradient on 
+        the QM atoms.
+
+        Returns
+        -------
+        gradH_QM   :  (3*nat,) matrix
+          gradient of nuclear energy on QM atoms
+        gradN_POL  :  (3*npol,) matrix
+          gradient of nuclear energy on polarizable sites
+        gradN_CHG  :  (3*nchg,) matrix
+          gradient of nuclear energy on point charges         
+        """
+        pass
+
+    def one_electron_part_GRAD(self, D):
+        """
+        contraction of gradient of one-electron integrals with density matrix
+            
+          dH             d (p|h^(1)|q)
+          --(D) = sum    ------------- D
+          dx         p,q      d x       p,q
+
+        Parameters
+        ----------
+        D           :   (nbf, nbf) matrix
+          symmetric density matrix in AO basis
+
+        Returns
+        -------
+        gradH_QM   :  (3*nat,) matrix
+          gradient of core Hamiltonian energy on QM atoms
+        gradH_POL  :  (3*npol,) matrix
+          gradient of core Hamiltonian energy on polarizable sites
+        gradH_CHG  :  (3*nchg,) matrix
+          gradient of core Hamiltonian energy on point charges
+        """
+        pass
+
+    def coulomb_J_GRAD(self, D1, D2):
+        """
+        J-like contraction of gradient of two-electron integrals with two density matrices D1 and D2
+
+          dJ                       (1)  d (pq|h^(2)|rs)   (2)
+          --(D1,D2) =  sum        D     ---------------  D
+          dx              p,q,r,s  p,q        d x         r,s
+           
+        Parameters
+        ----------
+        D1, D2   :   (nbf, nbf) matrices
+          symmetric density matrices in AO basis
+
+        Returns
+        -------
+        gradJ_QM   :  (3*nat,) matrix
+          gradient of Coulomb energy on QM atoms
+        gradJ_POL  :  (3*npol,) matrix
+          gradient of Coulomb energy on polarizable sites
+        """
+        FD1 = np.einsum('ipq,pq->i', self.F_elec, D1)
+        FD2 = np.einsum('ipq,pq->i', self.F_elec, D2)
+        # gradFD1 = sum_{p,q} (grad F)_{m,n} D1_{m,n}
+        gradFD1_QM, gradFD1_POL = self._contracted_gradients_F(D1)
+        # gradFD2 = sum_{r,s} (grad F)_{m,n} D2_{r,s}
+        gradFD2_QM, gradFD2_POL = self._contracted_gradients_F(D2)
+        
+        # derivative product rule -F.A.F, A has no dependence on positions of QM atom 
+        gradJ_QM = - (  np.einsum('ai,ij,j->a', gradFD1_QM, self.A,     FD2   )
+                       +np.einsum('i,ij,aj->a',     FD1   , self.A, gradFD2_QM) )
+        
+        # Gradient on polarizable atoms is assembled atom by atom
+        gradJ_POL = np.zeros(3*self.npol)
+        for k in range(0, self.npol):
+            for xyz in [0,1,2]:
+                dA = self._A_DERIV_POL(k, xyz)
+                dFD1 = gradFD1_POL[3*k+xyz,:]  # (3,) vector
+                dFD2 = gradFD2_POL[3*k+xyz,:]  # (3,) vector
+                # derivative product rule for -F.A.F
+                gradJ_POL[3*k+xyz] = - (  np.einsum('u,uj,j', dFD1, self.A[3*k:3*(k+1),:],  FD2) 
+                                         +np.einsum('i,ij,j',  FD1,     dA,                 FD2)
+                                         +np.einsum('i,iu,u',  FD1, self.A[:,3*k:3*(k+1)], dFD2) )
+
+        return gradJ_QM, gradJ_POL
+
+    def exchange_K_GRAD(self, D1, D2):
+        """
+        K-like contraction of gradient of two-electron integrals with two density matrices D1 and D2
+
+          dK                       (1)  d (pr|h^(2)|qs)   (2)
+          --(D1,D2) =  sum        D     ---------------  D
+          dx              p,q,r,s  p,q        d x         r,s
+           
+        Parameters
+        ----------
+        D1, D2   :   (nbf, nbf) matrices
+          symmetric density matrices in AO basis
+
+        Returns
+        -------
+        gradK_QM   :  (3*nat,) matrix
+          gradient of exchange energy on QM atoms
+        gradK_POL  :  (3*npol,) matrix
+          gradient of exchange energy on polarizable sites
+        """
+        pass
+
+        

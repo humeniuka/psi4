@@ -59,10 +59,16 @@ def test_contracted_gradients():
 
     # make random numbers reproducible
     np.random.seed(101)
-    # random matrix D
-    D = np.random.rand(nbf, nbf)
+
+    # random matrix D1
+    D1 = np.random.rand(nbf, nbf)
     # symmetrize matrix
-    D = 0.5 * (D + D.T)
+    D1 = 0.5 * (D1 + D1.T)
+
+    # random matrix D2
+    D2 = np.random.rand(nbf, nbf)
+    # symmetrize matrix
+    D2 = 0.5 * (D2 + D2.T)
 
     grad_comp = GradientComparison(molecule, basis, ribasis,
                                    polarizable_atoms, point_charges,
@@ -70,8 +76,11 @@ def test_contracted_gradients():
                                    verbose=0)
 
     # compute analytical and numerical QM gradients and compare them
-    assert grad_comp.compare_contracted_gradients_F(D)
-    assert grad_comp.compare_contracted_gradients_I(D)
+    assert grad_comp.compare_contracted_gradients_F(D1)
+    assert grad_comp.compare_contracted_gradients_I(D1)
+
+    assert grad_comp.compare_coulomb_J_gradients(D1, D2)
+
     
 
 if __name__ == "__main__":
