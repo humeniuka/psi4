@@ -535,3 +535,209 @@ class GradientComparison:
 
         # all tests passed
         return True
+
+    def compare_coulomb_J_gradients(self, D1, D2):
+        """
+        compare analytical and numerical gradients for the contraction
+
+          dJ                       (1)  d (pq|h^(2)|rs)   (2)
+          --(D1,D2) =  sum        D     ---------------  D
+          dx              p,q,r,s  p,q        d x         r,s
+
+        for symmetric density matrices D1 and D2
+        """
+        polham_grad = PolarizationHamiltonianGradients(*self.args, **self.kwds)
+        
+        molecule, basis, ribasis, polarizable_atoms = self.args[0:4]
+
+        # analytical gradient on QM atoms and point charges
+        grad = polham_grad.coulomb_J_GRAD(D1, D2)
+        grad_QM, grad_POL, grad_CHG = polham_grad.split_gradient(grad)
+
+        # step size for finite differences
+        step = 0.001
+
+        # numerical gradient on QM atoms
+        grad_QM_NUM = [None for k in range(0, 3*molecule.natom())]
+        for i in range(0, molecule.natom()):
+            for xyz in [0,1,2]:
+                def shift_coords(step):
+                    molecule_ = molecule.clone()
+                    coords = molecule_.geometry().np
+                    coords[i,xyz] += step
+                    molecule_.set_geometry(psi4.core.Matrix.from_array(coords))
+
+                    # The centers of the basis functions are taken from the basis object.
+                    wfn = psi4.core.Wavefunction.build(molecule_, basis.name() )
+                    basis_ = wfn.basisset()
+
+                    args_ = list(self.args[:])
+                    args_[0:3] = (molecule_, basis_, basis_)
+                    polham = PolarizationHamiltonian(*args_, **self.kwds)
+                    return polham
+                # f(x+dx)
+                J_plus = shift_coords(step).coulomb_J(D2)
+                DJD_plus = np.einsum('mn,mn', D1, J_plus)
+                # f(x-dx)
+                J_minus = shift_coords(-step).coulomb_J(D2)
+                DJD_minus = np.einsum('mn,mn', D1, J_minus)
+
+                # df/dx = (f(x+dx) - f(x-dx))/(2 dx)
+                grad_QM_NUM[3*i+xyz] = (DJD_plus - DJD_minus)/(2*step)
+
+        grad_QM = np.array(grad_QM)
+        grad_QM_NUM = np.array(grad_QM_NUM)
+        err_QM = la.norm(grad_QM - grad_QM_NUM)
+
+        print("+++ Gradient of J-like contraction  sum_{p,q,r,s} D1_{p,q} d(pq|h^(2)|rs)/dx D2_{r,s}   on QM atoms +++")
+        print(" Analytical:")
+        print(grad_QM)
+        print(" Numerical:")
+        print(grad_QM_NUM)
+        print(f" Error: {err_QM}")
+
+        # numerical gradient on polarizable sites
+        npol = polarizable_atoms.natom()
+        grad_POL_NUM = np.zeros(3*npol)
+        
+        for i in range(0, npol):
+            for xyz in [0,1,2]:
+                def shift_coords(step):
+                    polarizable_atoms_ = polarizable_atoms.clone()
+                    coords = polarizable_atoms_.geometry().np
+                    coords[i,xyz] += step
+                    polarizable_atoms_.set_geometry(psi4.core.Matrix.from_array(coords))
+                    args_ = list(self.args[:])
+                    args_[3] = polarizable_atoms_
+                    polham = PolarizationHamiltonian(*args_, **self.kwds)
+                    return polham
+                # f(x+dx)
+                J_plus = shift_coords(step).coulomb_J(D2)
+                DJD_plus = np.einsum('mn,mn', D1, J_plus)
+                # f(x-dx)
+                J_minus = shift_coords(-step).coulomb_J(D2)
+                DJD_minus = np.einsum('mn,mn', D1, J_minus)
+
+                # df/dx = (f(x+dx) - f(x-dx))/(2 dx)
+                grad_POL_NUM[3*i+xyz] = (DJD_plus - DJD_minus)/(2*step)
+
+        grad_POL = np.array(grad_POL)
+        err_POL = la.norm(grad_POL - grad_POL_NUM)
+
+        print("+++ Gradient of J-like contraction  sum_{p,q,r,s} D1_{p,q} d(pq|h^(2)|rs)/dx D1_{r,s}   on polarizable sites +++")
+        print(" Analytical:")
+        print(grad_POL)
+        print(" Numerical:")
+        print(grad_POL_NUM)
+        print(f" Error: {err_POL}")
+
+
+        assert err_QM  < 1.0e-5
+        assert err_POL < 1.0e-5
+
+        # all tests passed
+        return True
+
+    def compare_exchange_K_gradients(self, D1, D2):
+        """
+        compare analytical and numerical gradients for the contraction
+
+          dK                       (1)  d (pr|h^(2)|qs)   (2)
+          --(D1,D2) =  sum        D     ---------------  D
+          dx              p,q,r,s  p,q        d x         r,s
+
+        for symmetric density matrices D1 and D2
+        """
+        polham_grad = PolarizationHamiltonianGradients(*self.args, **self.kwds)
+        
+        molecule, basis, ribasis, polarizable_atoms = self.args[0:4]
+
+        # analytical gradient on QM atoms and point charges
+        grad = polham_grad.exchange_K_GRAD(D1, D2)
+        grad_QM, grad_POL, grad_CHG = polham_grad.split_gradient(grad)
+
+        assert la.norm(grad_CHG) == 0.0
+
+        # step size for finite differences
+        step = 0.001
+
+        # numerical gradient on QM atoms
+        grad_QM_NUM = [None for k in range(0, 3*molecule.natom())]
+        for i in range(0, molecule.natom()):
+            for xyz in [0,1,2]:
+                def shift_coords(step):
+                    molecule_ = molecule.clone()
+                    coords = molecule_.geometry().np
+                    coords[i,xyz] += step
+                    molecule_.set_geometry(psi4.core.Matrix.from_array(coords))
+
+                    # The centers of the basis functions are taken from the basis object.
+                    wfn = psi4.core.Wavefunction.build(molecule_, basis.name() )
+                    basis_ = wfn.basisset()
+
+                    args_ = list(self.args[:])
+                    args_[0:3] = (molecule_, basis_, basis_)
+                    polham = PolarizationHamiltonian(*args_, **self.kwds)
+                    return polham
+                # f(x+dx)
+                K_plus = shift_coords(step).exchange_K(D2)
+                DKD_plus = np.einsum('mn,mn', D1, K_plus)
+                # f(x-dx)
+                K_minus = shift_coords(-step).exchange_K(D2)
+                DKD_minus = np.einsum('mn,mn', D1, K_minus)
+
+                # df/dx = (f(x+dx) - f(x-dx))/(2 dx)
+                grad_QM_NUM[3*i+xyz] = (DKD_plus - DKD_minus)/(2*step)
+
+        grad_QM = np.array(grad_QM)
+        grad_QM_NUM = np.array(grad_QM_NUM)
+        err_QM = la.norm(grad_QM - grad_QM_NUM)
+
+        print("+++ Gradient of K-like contraction  sum_{p,q,r,s} D1_{p,q} d(pr|h^(2)|qs)/dx D2_{r,s}   on QM atoms +++")
+        print(" Analytical:")
+        print(grad_QM)
+        print(" Numerical:")
+        print(grad_QM_NUM)
+        print(f" Error: {err_QM}")
+
+        # numerical gradient on polarizable sites
+        npol = polarizable_atoms.natom()
+        grad_POL_NUM = np.zeros(3*npol)
+        
+        for i in range(0, npol):
+            for xyz in [0,1,2]:
+                def shift_coords(step):
+                    polarizable_atoms_ = polarizable_atoms.clone()
+                    coords = polarizable_atoms_.geometry().np
+                    coords[i,xyz] += step
+                    polarizable_atoms_.set_geometry(psi4.core.Matrix.from_array(coords))
+                    args_ = list(self.args[:])
+                    args_[3] = polarizable_atoms_
+                    polham = PolarizationHamiltonian(*args_, **self.kwds)
+                    return polham
+                # f(x+dx)
+                K_plus = shift_coords(step).exchange_K(D2)
+                DKD_plus = np.einsum('mn,mn', D1, K_plus)
+                # f(x-dx)
+                K_minus = shift_coords(-step).exchange_K(D2)
+                DKD_minus = np.einsum('mn,mn', D1, K_minus)
+
+                # df/dx = (f(x+dx) - f(x-dx))/(2 dx)
+                grad_POL_NUM[3*i+xyz] = (DKD_plus - DKD_minus)/(2*step)
+
+        grad_POL = np.array(grad_POL)
+        err_POL = la.norm(grad_POL - grad_POL_NUM)
+
+        print("+++ Gradient of K-like contraction  sum_{p,q,r,s} D1_{p,q} d(pr|h^(2)|qs)/dx D1_{r,s}   on polarizable sites +++")
+        print(" Analytical:")
+        print(grad_POL)
+        print(" Numerical:")
+        print(grad_POL_NUM)
+        print(f" Error: {err_POL}")
+
+
+        assert err_QM  < 1.0e-5
+        assert err_POL < 1.0e-5
+
+        # all tests passed
+        return True

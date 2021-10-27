@@ -38,8 +38,10 @@ Derivatives with respect to
 
 The three sets are not disjoint. The QM nuclei belong to the point charges and are centers
 of basis functions at the same time. Similarly, some of the point charges may also have polarizabilities. 
-However, the gradients are computed separately for each group of centers. The type of gradient
-computed by a member function is indicated by its name
+However, the gradients are computed separately for each group of centers. 
+It is only at the end that the different gradient contributions are added for the same centers.
+
+The type of gradient computed by a member function is indicated by its name
 
  * QM atoms           -->    some_quantity_DERIV_QM(k,  c)
  * point charges      -->    some_quantity_DERIV_CHG(k, c)
@@ -49,7 +51,24 @@ computed by a member function is indicated by its name
 Derivatives are computed for each atom coordinate separately, so that the dimensions of the tensors,
 which are differentiated, do not change. 
 
-It is only at the end that the different gradient contributions are added for the same centers.
+To avoid having to keep large arrays in memory, the gradients of the effective polarizability A, diag(A),
+the polarization integrals F^(elec), I^(elec) and the overlap matrix S are directly contracted with
+the partial derivatives. For instance the gradient of a function
+
+   f(A, F^(e), F^(n), I^(e), ...)
+
+is computed as
+
+   df   d A   df    d F^(e)   d f
+   -- = --- . -- +  ------- . -------  +  ....
+   dx   d x   dA      d x     d F^(e)
+
+where the scalar products are implemented as linear functions operating on tensors, i.e. dA/dx(U) with U=df/dA.
+For each gradient contraction a member function with the prefix _grad###() exists, e.g. `_gradA(U)` or `_gradFelec(E)`.
+
+These linear functions return the gradients on QM atoms, polarizable sites and point charges as one long
+vector of size `3*(nat+npol+nchg)`.
+
 """
 import numpy as np
 import numpy.linalg as la
@@ -669,7 +688,17 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
           gradient w/r/t QM atoms, polarizable sites and point charges,
           see `_gradient_dimensions()` for more information
         """
-        pass
+        # dJ/dF
+        FD1 = np.einsum('imn,mn->i', self.F_elec, D1)
+        FD2 = np.einsum('imn,mn->i', self.F_elec, D2)
+        AFD1 = np.einsum('ij,j', self.A, FD1)
+        AFD2 = np.einsum('ij,j', self.A, FD2)
+        dJdF = -np.einsum('i,mn->imn', AFD2, D1) - np.einsum('i,mn->imn', AFD1, D2)
+        # dJ/dA
+        dJdA = -np.einsum('i,j->ij', FD1, FD2)
+        # evaluate contractions, dJdx = dF/dx . dJ/dF + dA/dx . dJ/dA
+        grad = self._gradFelec(dJdF) + self._gradA(dJdA)
+        return grad
 
     def exchange_K_GRAD(self, D1, D2):
         """
@@ -690,5 +719,31 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
           gradient w/r/t QM atoms, polarizable sites and point charges,
           see `_gradient_dimensions()` for more information
         """
-        pass
+        assert la.norm(D1 - D2) == 0.0, "gradient contraction dK/dx(D1,D2) only available for D1 == D2"
+        # Since the psi4 integral machinery assumes that density matrices are symmetric,
+        # we cannot compute dK/dx(D1,D2) for D1 != D2. The reason is that when psi4 evaluates
+        # the contraction 
+        #
+        #   dF                d F_{i,m,n}
+        #   -- (E) = sum      ----------- E
+        #   dx          i,m,n    d x       i,m,n
+        #
+        # it assumes that E_{i;m,n} == E{i;n,m} and only sums over one triangle of the density matrix.
+        # However, the intermediate tensor dKdF_{i,m,n} that arises during the construction of dK/dx
+        # is not symmetric in the indices m and n.
+
+        FD2 = np.einsum('jls,sn->jln', self.F_elec, D2)
+        FD2D1 = np.einsum('jln,lm->jmn', FD2, D1)
+        AFD2D1 = np.einsum('ij,jmn->imn', self.A, FD2D1)
+        # similarly for the transposes of the density matrices
+        FD2t = np.einsum('jls,ns->jln', self.F_elec, D2)
+        FD2tD1t = np.einsum('jln,ml->jmn', FD2t, D1)
+        AFD2tD1t = np.einsum('ij,jmn->imn', self.A, FD2tD1t)
+        # partial derivatives
+        dKdF = - (AFD2D1 + AFD2tD1t)
+        dKdA = - np.einsum('imn,jmn->ij', self.F_elec, FD2tD1t)
+        # gradient contractions, dKdx = dF/dx . dK/dF + dA/dx . dK/dA
+        grad = self._gradFelec(dKdF) + self._gradA(dKdA)
+
+        return grad
 

@@ -40,8 +40,14 @@ def test_qmmm2epol_gradients():
 
 def test_contracted_gradients():
     """
-    check QM gradients of a contraction of polarization integrals F^(elec) 
-    with an array of (constant) density matrices
+    check gradients of contractions
+
+      * dA/dx(U)
+      * d(diagA)/dx(V)
+      * dF^(e)/dx(E)
+      * dF^(n)/dx(N)
+      * dS/dx(R)
+
     """
     # load QM and MM regions from AMBER files
     molecule, polarizable_atoms, point_charges, polarizabilities = amber2psi4('solvated.prmtop', 'solvated.rst7', 'solvated.qmregion')
@@ -96,7 +102,57 @@ def test_contracted_gradients():
     assert grad_comp.compare_contracted_gradients_F(E)
     assert grad_comp.compare_contracted_gradients_I(Y)
 
+def test_coulomb_exchange_gradients():
+    """
+    check gradients of Coulomb and exchange energy
+    """
+    # load QM and MM regions from AMBER files
+    molecule, polarizable_atoms, point_charges, polarizabilities = amber2psi4('solvated.prmtop', 'solvated.rst7', 'solvated.qmregion')
+    
+    # basis for QM atoms
+    wfn = psi4.core.Wavefunction.build(molecule, 'sto-3g')
+    basis = wfn.basisset()
+    ribasis = basis
+
+    polham_grad = PolarizationHamiltonianGradients(molecule, basis, ribasis,
+                                                   polarizable_atoms, point_charges,
+                                                   polarizabilities=polarizabilities,
+                                                   verbose=0)
+
+    # number of polarizable sites
+    npol = polham_grad.npol
+    # number of AOs
+    nbf = polham_grad.nbf
+
+    # make random numbers reproducible
+    np.random.seed(101)
+
+    # random density matrices
+    D1 = np.random.rand(nbf, nbf)
+    D2 = np.random.rand(nbf, nbf)
+    # symmetrize matrices
+    D1 = 0.5 * (D1 + np.einsum('mn->nm', D1))
+    D2 = 0.5 * (D2 + np.einsum('mn->nm', D2))
+
+    grad_comp = GradientComparison(molecule, basis, ribasis,
+                                   polarizable_atoms, point_charges,
+                                   polarizabilities=polarizabilities,
+                                   verbose=0)
+
+    # compute analytical and numerical QM gradients and compare them
+    assert grad_comp.compare_coulomb_J_gradients(D1, D2)
+
+    # Since the psi4 integral machinery assumes that density matrices are symmetric,
+    # we cannot compute dK/dx(D1,D2) for D1 != D2. The reason is that when psi4 evaluates
+    # the contraction 
+    #   dF/dx(E) = dF_{i;m,n}/dx E_{i;m,n}
+    # it assumes that E_{i;m,n} == E{i;n,m} and only sums over one triangle of the density matrix.
+    # However, the intermediate matrices that arise during the construction of dK/dx are not 
+    # symmetric.
+    assert grad_comp.compare_exchange_K_gradients(D1, D1)
+
 
 if __name__ == "__main__":
-    test_qmmm2epol_gradients()
-    test_contracted_gradients()
+    #test_qmmm2epol_gradients()
+    #test_contracted_gradients()
+    test_coulomb_exchange_gradients()
