@@ -61,6 +61,50 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
     """
     gradients of two-electron, one-electron and zero-electron parts of the polarization Hamiltonian
     """
+    def __init__(self, *args, **kwds):
+        super().__init__(*args, **kwds)
+        # initialize various indices
+        self._gradient_dimensions()
+
+    def _gradient_dimensions(self):
+        """
+        The gradient vector has length 
+
+           ngrad = 3*nat + 3*npol + 3*nchg 
+
+        The three blocks contain the gradient with respect to
+
+           *  the QM atoms,            grad[0 : 3*nat                                 ]
+           *  the polarizable sites,   grad[    3*nat : 3*(nat+npol)                  ]
+           *  the point charges,       grad[            3*(nat+npol):3*(nat+npol+nchg)]
+        
+        This functions determines the sizes and starting offsets of the different blocks.
+        """
+        self.nat = self.molecule.natom()
+        # already set in super class
+        #self.npol = self.polarizable_atoms.natom()
+        self.nchg = self.point_charges.natom()
+
+        # length of gradient vector
+        self.ngrad = 3*(self.nat + self.npol + self.nchg)
+
+        # start of QM gradient
+        self.startQM = 0
+        # start of gradient on polarizable sites
+        self.startPOL = 3*self.nat
+        # start of gradient on point charges
+        self.startCHG = 3*(self.nat+self.npol)
+
+    def split_gradient(self, grad):
+        """
+        split gradients into blocks for QM atoms, polarizable sites and point charges
+        """
+        assert len(grad) == self.ngrad
+        grad_QM  = grad[self.startQM :self.startPOL]
+        grad_POL = grad[self.startPOL:self.startCHG]
+        grad_CHG = grad[self.startCHG:             ]
+        return grad_QM, grad_POL, grad_CHG
+
     def _monopole_damping(self, r, alpha):
         # undamped field of a monopole
         f = 1.0
@@ -281,204 +325,287 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         dA = - np.einsum('im,mn,nj->ij', self.A, dT, self.A)
         return dA
 
-    def zero_electron_part_DERIV_QM(self, k, c):
-        """
-        derivatives of zero-electron Hamiltonian with respect to QM centers
-        """
-        dF = self._F_nucl_DERIV_QM(k,c)
-        # effective polarizability tensor A has no dependency on the QM centers, dA = 0
-        # chain rule for product E(x) = -0.5 F(x).A .F(x)
-        dE = -0.5 * (
-              np.einsum('i,ij,j', dF,          self.A, self.F_nucl)
-            + np.einsum('i,ij,j', self.F_nucl, self.A, dF         ))
-        return dE
-
-    def zero_electron_part_DERIV_POL(self, k, c):
-        """
-        derivatives of zero-electron Hamiltonian with respect to polarizable sites
-        """
-        dF = self._F_nucl_DERIV_POL(k,c)
-        dA = self._A_DERIV_POL(k,c)
-        # chain rule for product E(x) = -0.5 F(x).A(x).F(x)
-        dE = -0.5 * (
-              np.einsum('i,ij,j', dF,          self.A, self.F_nucl)
-            + np.einsum('i,ij,j', self.F_nucl, dA    , self.F_nucl)
-            + np.einsum('i,ij,j', self.F_nucl, self.A, dF         ))
-        return dE
-
-    def zero_electron_part_DERIV_CHG(self, k, c):
-        """
-        derivatives of zero-electron Hamiltonian with respect to nuclei or point charges
-        """
-        dF = self._F_nucl_DERIV_CHG(k,c)
-        # effective polarizability tensor A has no dependency on the point charges, dA = 0
-        # chain rule for product E(x) = -0.5 F(x).A .F(x)
-        dE = -0.5 * (
-              np.einsum('i,ij,j', dF,          self.A, self.F_nucl)
-            + np.einsum('i,ij,j', self.F_nucl, self.A, dF         ))
-        return dE
+    #####################################################################
+    #                                        d Y_{i,j,...}              #
+    # CONTRACTIONS   dY/dx (Z) = sum         ------------- Z            #
+    #                              i,j,...       d x        i,j,...     #
+    #####################################################################
         
-
-    def _contracted_gradients_F(self, D):
+    def _gradA(self, U):
         """
-        compute the gradient of the contraction of the electronic field integrals F^(elec)_{i;m,n} with a
-        symmetric density matrix D_{m,n}, that is assumed to be a constant.
+        contraction of the gradient of the effective polarizability with a 
+        (3 Npol) x (3 Npol) sized matrix U:
 
-        The gradient w/r/t the centers R of the QM atoms is
+           dA              d A_{ij}
+           -- (T) = sum    -------- U
+           dx          i,j   d x     ij
 
-                                                                  (elec)
-          gradFD_QM[3*j:3*(j+1),3*i:3*(i+1)] =  grad      sum    F      (R(1),...,R(nbf); R   (i)) D          i = 1,...,npol ; j = 1,...,nat
-                                                    R(j)     m,n  m,n                      pol      m,n
+        This function allows to compute derivatives of functions f(A,...,) as
+         
+          df/dx = dA/dx . df/dA + ...
 
-        The gradients on the polarizable site
-
-                                                            (elec)
-          gradFD_QM[3*i:3*(i+1),xyz] =  grad        sum    F      (R(1),...,R(nbf); R   (i)) D                  i = 1,...,npol ; xyz = 0,1,2
-                                            Rpol(i)    m,n  m,n                      pol      m,n
-
-
-        can be constructed from gradFD_QM, since 
-
-           dF_{m,n}/dR(pol) = - dF_{m,n}/dR(m) - dF_{m,n}/dR(n)
-
-        where R(m) is the atomic center of basis function m.
+        by setting U = df/dA.
 
 
         Parameters
         ----------
-        D   :  (nbf, nbf) matrix
-          symmetric density matrix
+        U        :   (3*npol, 3*npol) matrix
+          partial derivatives df/dA_{i,j} for some function f(A,...)
 
         Returns
         -------
-        gradFD_QM   :  (3*nat, 3*npol) matrix
-          gradient of contraction on QM atoms
-        gradFD_POL  :  (3*npol, 3) matrix
-          non-zero parts of gradient of contraction on polarizable sites
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information
+
+        Since A only depends on the polarizable atoms, only the middle
+        part of `grad` is filled in.
         """
-        # check that D is symmetric, otherwise the gradients will be wrong
-        assert np.sum(D - D.T) < 1.0e-10, "Density matrix D has to be symmetric"
+        grad = np.zeros(self.ngrad)
 
-        # convert D to a psi4 matrix object
-        D = psi4.core.Matrix.from_array(D)
+        for ipol in range(0, self.npol):
+            for xyz in [0,1,2]:
+                dA = self._A_DERIV_POL(ipol,xyz)
+                grad[self.startPOL + 3*ipol+xyz] = np.einsum('ij,ij', dA, U)
 
+        return grad
+
+    def _gradDiagA(self, V):
+        """
+        contraction with the gradients of the diagonal 3x3 blocks of the 
+        effective polarizability matrix
+
+           d diag(A)                    d A_{3*k+a,3*k+b}
+           --------- (V) = sum  sum     ----------------- V
+             d x              k    a,b        d x          k,a,b
+         
+        Parameters
+        ----------
+        V        :   (npol, 3, 3) np.ndarray
+          partial derivatives df/d(diag A)_{k,a,b} for some function f(diag(A),...)
+
+        Returns
+        -------
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information        
+        """
+        grad = np.zeros(self.ngrad)
+
+        for ipol in range(0, self.npol):
+            for xyz in [0,1,2]:
+                dA = self._A_DERIV_POL(ipol,xyz)
+                grad_ipol = 0.0
+                for k in range(0, self.npol):
+                    for a in [0,1,2]:
+                        for b in [0,1,2]:
+                            grad_ipol += dA[3*k+a,3*k+b] * V[k,a,b]
+                grad[self.startPOL + 3*ipol+xyz] += grad_ipol
+
+        return grad
+
+    def _gradFnucl(self, N):
+        """
+        gradient of the contraction of the nuclear fields with a vector N
+
+             (n)               (n)
+           dF                dF_i
+           ------ (N) = sum  ----- N
+            d x            i  d x   i
+
+        Parameters
+        ----------
+        N      :   (3*npol,) vector
+          partial derivatives df/dF^(n)_{i} of some function f(F^(n),...)
+
+        Returns
+        -------
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information        
+        """
+        grad = np.zeros(self.ngrad)
+
+        # gradient on QM atoms
+        for inuc in range(0, self.nat):
+            for xyz in [0,1,2]:
+                dFn = self._F_nucl_DERIV_QM(inuc, xyz)
+                grad[self.startQM +3*inuc+xyz] = np.einsum('i,i', dFn, N)
+        # gradient on polarizable sites
+        for ipol in range(0, self.npol):
+            for xyz in [0,1,2]:
+                dFn = self._F_nucl_DERIV_POL(ipol, xyz)
+                grad[self.startPOL+3*ipol+xyz] = np.einsum('i,i', dFn, N)        
+        # gradient on point charges
+        for ichg in range(0, self.nchg):
+            for xyz in [0,1,2]:
+                dFn = self._F_nucl_DERIV_CHG(ichg, xyz)
+                grad[self.startCHG+3*ichg+xyz] = np.einsum('i,i', dFn, N)
+
+        return grad
+
+    def _gradFelec(self, E):
+        """
+        gradient of the contraction of the electronic field integrals with a 
+        (3*Npol x Nao x Nao) tensor
+
+             (e)                     (e)
+           dF                      dF_{i,m,n}
+           ----- (E) = sum  sum    ---------- E
+           d x            i    m,n   d x       i,m,n
+
+        `E` is assumed to be symmetric in the last two indices, E_{i,m,n} = E_{i,n,m}
+
+        Parameters
+        ----------
+        E      :   (3*npol, nbf, nbf) np.ndarray
+          partial derivatives df/dF^(e)_{i,m,n} of some function f(F^(e),...)
+
+        Returns
+        -------
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information        
+        """
+        grad = np.zeros(self.ngrad)
         # cartesian coordinates of polarizable sites
         R = self.polarizable_atoms.geometry().np
 
-        # gradient of F^(elec).D on the QM atoms
-        gradFD_QM = np.zeros((3*self.molecule.natom(), 3*self.npol))
-        # gradient of F^(elec).D on the polarizable sites
-        # Since 
-        #        d       (elec)
-        #      --------  F       =  0   if  i != j
-        #      d Rpol(j)  i,m,n
-        # we only have to store the gradients for i == j.
-        gradFD_POL = np.zeros((3*self.npol, 3))
+        # check that E is symmetric in the 2nd and 3rd indices, 
+        # otherwise the gradients will be wrong
+        assert np.sum(E - np.einsum('imn->inm', E)) < 1.0e-10, "E_{i,m,n} has to be symmetric in the indices m and n, E_{i,m,n} = E_{i,n,m}"
 
-        for i in range(0, self.npol):
+        for ipol in range(0, self.npol):
+            # indices of QM atoms in gradients
+            idxQM = np.arange(self.startQM, self.startPOL)
+            # indices of polarizable atom i in gradients
+            idxPOL = np.arange(self.startPOL+3*ipol, self.startPOL+3*(ipol+1))
+
             # x-component of 
-            #   sum_mn (grad F_mn(Ri)) D_mn
-            dFxD = self.mints.polarization_integrals_grad(R[i,:],
+            #   sum_mn (grad F_mn(Ri)) E_{3*ipol+0,m,n}
+
+            # conversion to a psi4 matrix object
+            Eix = psi4.core.Matrix.from_array(E[3*ipol+0,:,:])
+            dFEx = self.mints.polarization_integrals_grad(R[ipol,:],
                                                           3, 1,0,0, # k=3, mx=1, my=0, mz=0
-                                                          self.cutoff_alpha, self.cutoff_power, D).np
-            gradFD_QM[:,3*i+0] = dFxD.flatten()
-            gradFD_POL[3*i:3*(i+1), 0] = -np.sum(dFxD, axis=0)
+                                                          self.cutoff_alpha, self.cutoff_power, Eix).np
+            grad[idxQM ] += dFEx.flatten()
+            grad[idxPOL] -= np.sum(dFEx, axis=0)
             # y-component
-            dFyD = self.mints.polarization_integrals_grad(R[i,:],
+            Eiy = psi4.core.Matrix.from_array(E[3*ipol+1,:,:])
+            dFEy = self.mints.polarization_integrals_grad(R[ipol,:],
                                                           3, 0,1,0, # k=3, mx=0, my=1, mz=0
-                                                          self.cutoff_alpha, self.cutoff_power, D  ).np
-            gradFD_QM[:,3*i+1] = dFyD.flatten()
-            gradFD_POL[3*i:3*(i+1), 1] = -np.sum(dFyD, axis=0)
+                                                          self.cutoff_alpha, self.cutoff_power, Eiy).np
+            grad[idxQM ] += dFEy.flatten()
+            grad[idxPOL] -= np.sum(dFEy, axis=0)
+
             # z-component
-            dFzD = self.mints.polarization_integrals_grad(R[i,:],
+            Eiz = psi4.core.Matrix.from_array(E[3*ipol+2,:,:])
+            dFEz = self.mints.polarization_integrals_grad(R[ipol,:],
                                                           3, 0,0,1, # k=3, mx=0, my=0, mz=1
-                                                          self.cutoff_alpha, self.cutoff_power, D  ).np
-            gradFD_QM[:,3*i+2] = dFzD.flatten()
-            gradFD_POL[3*i:3*(i+1), 2] = -np.sum(dFzD, axis=0)
+                                                          self.cutoff_alpha, self.cutoff_power, Eiz).np
+            grad[idxQM ] += dFEz.flatten()
+            grad[idxPOL] -= np.sum(dFEz, axis=0)
 
-        return gradFD_QM, gradFD_POL
+        return grad
 
-    def _contracted_gradients_I(self, D):
+    def _gradI(self, Y):
         """
-        compute the gradient of the contraction of the electronic field integrals I^(elec)[a,b]_{m,n} with a
-        symmetric density matrix D_{m,n}, that is assumed to be a constant.
+        gradient of the contraction of the exact same-site integrals I^(elec)
+        with a (Npol x 3 x 3 x Nao x Nao) tensor Y
 
-                             (elec)
-           ID[a,b] = sum    I  [a,b] D
-                        m,n  m,n      m,n
+           dI                          dI_{k,a,b,m,n}
+           -- (E) = sum  sum    sum    -------------  Y
+           dx          k    a,b    m,n     d x         k,a,b,m,n
+
+        Y is assumed to be symmetric in the last two indices, Y_{k,a,b,m,n} = Y_{k,a,b,n,m}
 
         Parameters
         ----------
-        D   :  (nbf, nbf) matrix
-          symmetric density matrix
+        Y      :   (npol, 3, 3, nbf, nbf) np.ndarray
+          partial derivatives df/dI_{k,a,b,m,n} of some function f(I^(elec), ...)
 
         Returns
         -------
-        gradID_QM   :  (3*nat, npol,3,3) matrix
-          gradient of contraction ID on QM atoms
-        gradID_POL  :  (3*npol, 3,3) matrix
-          non-zero parts of gradient of contraction ID on polarizable sites
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information        
         """
-        # check that D is symmetric, otherwise the gradients will be wrong
-        assert np.sum(D - D.T) < 1.0e-10, "Density matrix D has to be symmetric"
-
-        # convert D to a psi4 matrix object
-        D = psi4.core.Matrix.from_array(D)
-
+        grad = np.zeros(self.ngrad)
         # cartesian coordinates of polarizable sites
         R = self.polarizable_atoms.geometry().np
 
-        # gradient of I^(elec) on the QM atoms
-        gradID_QM = np.zeros((3*self.molecule.natom(), self.npol, 3,3))
-        # gradient of I^(elec) on the polarizable sites
-        # We only have to store the gradients for i == j.
-        gradID_POL = np.zeros((3*self.npol, 3,3))
+        # check that Y is symmetric in the 2nd and 3rd as well as in the 
+        # 4th and 5th indices, otherwise the gradients will be wrong
+        assert np.sum(Y - np.einsum('iabmn->ibamn', Y)) < 1.0e-10, "Y_{i,a,b,m,n} has to be symmetric in the indices a and b, Y_{i,a,b,m,n} = Y_{i,b,a,m,n}"
+        assert np.sum(Y - np.einsum('iabmn->iabnm', Y)) < 1.0e-10, "Y_{i,a,b,m,n} has to be symmetric in the indices m and n, Y_{i,a,b,m,n} = Y_{i,a,b,n,m}"
 
-        for i in range(0, self.npol):
+        def add_gradient(ipol=0, a=0,b=0, mx=2,my=0,mz=0, factor=1):
+            """
+            add gradient contribution from particular block (ipol,a,b)
+
+                      dI_{ipol,a,b,m,n} 
+               sum    ----------------- Y_{ipol,a,b,m,n}
+                  m,n      d x
+            """
+            # indices of QM atoms in gradients
+            idxQM = np.arange(self.startQM, self.startPOL)
+            # indices of polarizable atom i in gradients
+            idxPOL = np.arange(self.startPOL+3*ipol, self.startPOL+3*(ipol+1))
+
+            D = psi4.core.Matrix.from_array( Y[ipol,a,b,:,:] )
+            dID = self.mints.polarization_integrals_grad(R[ipol,:],
+                                                         6, mx,my,mz,  # k=6
+                                                         self.cutoff_alpha, 2*self.cutoff_power, D).np
+            grad[idxQM ] += factor * dID.flatten()
+            grad[idxPOL] -= factor * np.sum(dID, axis=0)
+
+        for ipol in range(0, self.npol):
             # x^2/r^6
-            dIxxD = self.mints.polarization_integrals_grad(R[i,:],
-                                                           6, 2,0,0, # k=6, mx=2,my=0,mz=0,
-                                                           self.cutoff_alpha, 2*self.cutoff_power, D).np
-            gradID_QM[:,i,0,0] = dIxxD.flatten()
-            gradID_POL[3*i:3*(i+1), 0,0] = -np.sum(dIxxD, axis=0)
+            add_gradient(ipol, 0, 0, mx=2, my=0, mz=0, factor=1)
             # y^2/r^6
-            dIyyD = self.mints.polarization_integrals_grad(R[i,:],
-                                                           6, 0,2,0, # k=6, mx=0,my=2,mz=0,
-                                                           self.cutoff_alpha, 2*self.cutoff_power, D).np
-            gradID_QM[:,i,1,1] = dIyyD.flatten()
-            gradID_POL[3*i:3*(i+1), 1,1] = -np.sum(dIyyD, axis=0)
+            add_gradient(ipol, 1, 1, mx=0, my=2, mz=0, factor=1)
             # z^2/r^6
-            dIzzD = self.mints.polarization_integrals_grad(R[i,:],
-                                                           6, 0,0,2, # k=6, mx=0,my=0,mz=2,
-                                                           self.cutoff_alpha, 2*self.cutoff_power, D).np
-            gradID_QM[:,i,2,2] = dIzzD.flatten()
-            gradID_POL[3*i:3*(i+1), 2,2] = -np.sum(dIzzD, axis=0)
+            add_gradient(ipol, 2, 2, mx=0, my=0, mz=2, factor=1)
             # xy/r^6
-            dIxyD = self.mints.polarization_integrals_grad(R[i,:],
-                                                           6, 1,1,0, # k=6, mx=1,my=1,mz=0,
-                                                           self.cutoff_alpha, 2*self.cutoff_power, D).np
-            gradID_QM[:,i,0,1] = dIxyD.flatten()
-            gradID_QM[:,i,1,0] = dIxyD.flatten()
-            gradID_POL[3*i:3*(i+1), 0,1] = -np.sum(dIxyD, axis=0)
-            gradID_POL[3*i:3*(i+1), 1,0] = gradID_POL[3*i:3*(i+1), 0,1]
+            add_gradient(ipol, 0, 1, mx=1, my=1, mz=0, factor=2)
             # xz/r^6
-            dIxzD = self.mints.polarization_integrals_grad(R[i,:],
-                                                           6, 1,0,1, # k=6, mx=1,my=0,mz=1,
-                                                           self.cutoff_alpha, 2*self.cutoff_power, D).np
-            gradID_QM[:,i,0,2] = dIxzD.flatten()
-            gradID_QM[:,i,2,0] = dIxzD.flatten()
-            gradID_POL[3*i:3*(i+1), 0,2] = -np.sum(dIxzD, axis=0)
-            gradID_POL[3*i:3*(i+1), 2,0] = gradID_POL[3*i:3*(i+1), 0,2]
+            add_gradient(ipol, 0, 2, mx=1, my=0, mz=1, factor=2)
             # yz/r^6
-            dIyzD = self.mints.polarization_integrals_grad(R[i,:],
-                                                           6, 0,1,1, # k=6, mx=0,my=1,mz=1,
-                                                           self.cutoff_alpha, 2*self.cutoff_power, D).np
-            gradID_QM[:,i,1,2] = dIyzD.flatten()
-            gradID_QM[:,i,2,1] = dIyzD.flatten()
-            gradID_POL[3*i:3*(i+1), 1,2] = -np.sum(dIyzD, axis=0)
-            gradID_POL[3*i:3*(i+1), 2,1] = gradID_POL[3*i:3*(i+1), 1,2]
+            add_gradient(ipol, 1, 2, mx=0, my=1, mz=1, factor=2)
 
-        return gradID_QM, gradID_POL
+        return grad
+
+    def _gradS(self, R):
+        """
+        gradient of the contraction of the overlap matrix with some generalized density matrix R
+
+          dS              d(S_{m,n})
+          -- (R) = sum    ----------  R
+          dx          m,n     d x      m,n
+
+        R is assumed to be symmetric.
+
+        Parameters
+        ----------
+        R        :   (nbf, nbf) matrix
+          partial derivatives df/dS_{m,n} of some function f(S, ...)
+
+        Returns
+        -------
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information
+
+        Only gradients on the QM atoms are non-zero.
+        """
+        grad = np.zeros(self.ngrad)
+        # conversion to psi4 matrix object
+        R = psi4.core.Matrix.from_array(R)
+        # only QM gradients are non-zero
+        grad[self.startQM:self.startPOL] = self.mints.overlap_grad(R).np.flatten()
+
+        return grad
 
     def zero_electron_part_GRAD(self):
         """
@@ -493,14 +620,14 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
 
         Returns
         -------
-        gradH_QM   :  (3*nat,) matrix
-          gradient of nuclear energy on QM atoms
-        gradN_POL  :  (3*npol,) matrix
-          gradient of nuclear energy on polarizable sites
-        gradN_CHG  :  (3*nchg,) matrix
-          gradient of nuclear energy on point charges         
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information
         """
-        pass
+        K = -np.einsum('ij,j->i', self.A, self.F_nucl)
+        L = -0.5*np.einsum('i,j->ij', self.F_nucl, self.F_nucl)
+        grad = self._gradFnucl(K) + self._gradA(L)
+        return grad
 
     def one_electron_part_GRAD(self, D):
         """
@@ -517,12 +644,9 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
 
         Returns
         -------
-        gradH_QM   :  (3*nat,) matrix
-          gradient of core Hamiltonian energy on QM atoms
-        gradH_POL  :  (3*npol,) matrix
-          gradient of core Hamiltonian energy on polarizable sites
-        gradH_CHG  :  (3*nchg,) matrix
-          gradient of core Hamiltonian energy on point charges
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information
         """
         pass
 
@@ -541,35 +665,11 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
 
         Returns
         -------
-        gradJ_QM   :  (3*nat,) matrix
-          gradient of Coulomb energy on QM atoms
-        gradJ_POL  :  (3*npol,) matrix
-          gradient of Coulomb energy on polarizable sites
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information
         """
-        FD1 = np.einsum('ipq,pq->i', self.F_elec, D1)
-        FD2 = np.einsum('ipq,pq->i', self.F_elec, D2)
-        # gradFD1 = sum_{p,q} (grad F)_{m,n} D1_{m,n}
-        gradFD1_QM, gradFD1_POL = self._contracted_gradients_F(D1)
-        # gradFD2 = sum_{r,s} (grad F)_{m,n} D2_{r,s}
-        gradFD2_QM, gradFD2_POL = self._contracted_gradients_F(D2)
-        
-        # derivative product rule -F.A.F, A has no dependence on positions of QM atom 
-        gradJ_QM = - (  np.einsum('ai,ij,j->a', gradFD1_QM, self.A,     FD2   )
-                       +np.einsum('i,ij,aj->a',     FD1   , self.A, gradFD2_QM) )
-        
-        # Gradient on polarizable atoms is assembled atom by atom
-        gradJ_POL = np.zeros(3*self.npol)
-        for k in range(0, self.npol):
-            for xyz in [0,1,2]:
-                dA = self._A_DERIV_POL(k, xyz)
-                dFD1 = gradFD1_POL[3*k+xyz,:]  # (3,) vector
-                dFD2 = gradFD2_POL[3*k+xyz,:]  # (3,) vector
-                # derivative product rule for -F.A.F
-                gradJ_POL[3*k+xyz] = - (  np.einsum('u,uj,j', dFD1, self.A[3*k:3*(k+1),:],  FD2) 
-                                         +np.einsum('i,ij,j',  FD1,     dA,                 FD2)
-                                         +np.einsum('i,iu,u',  FD1, self.A[:,3*k:3*(k+1)], dFD2) )
-
-        return gradJ_QM, gradJ_POL
+        pass
 
     def exchange_K_GRAD(self, D1, D2):
         """
@@ -586,10 +686,9 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
 
         Returns
         -------
-        gradK_QM   :  (3*nat,) matrix
-          gradient of exchange energy on QM atoms
-        gradK_POL  :  (3*npol,) matrix
-          gradient of exchange energy on polarizable sites
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information
         """
         pass
 
