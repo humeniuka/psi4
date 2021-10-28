@@ -475,6 +475,7 @@ void MintsHelper::one_body_ao_computer(std::vector<std::shared_ptr<OneBodyAOInt>
         }      // End Rectangular
     }          // End Mu
 }
+
 void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAOInt>> ints, SharedMatrix D,
                                            SharedMatrix out) {
     // Grab basis info
@@ -586,6 +587,146 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
         }
     }
 }
+
+void MintsHelper::grad_two_center_computer_general(std::vector<std::shared_ptr<OneBodyAOInt>> ints, SharedMatrix D,
+                                           SharedMatrix out) {
+    // NOTE: This function differs from `grad_two_center_computer` in that it does not 
+    // assume the density matrix D to be symmetric.
+
+    // Grab basis info
+    std::shared_ptr<BasisSet> bs1 = ints[0]->basis1();
+    std::shared_ptr<BasisSet> bs2 = ints[0]->basis2();
+    if (bs1 != bs2) {
+        throw PSIEXCEPTION("BasisSets must be the same for deriv1");
+    }
+
+    if (D->nirrep() > 1) {
+        throw PSIEXCEPTION("Density must be of C1 symmetry");
+    }
+
+    // Limit to the number of incoming onbody ints
+    size_t nthread = nthread_;
+    if (nthread > ints.size()) {
+        nthread = ints.size();
+    }
+
+    // Grab the buffers
+    std::vector<const double *> ints_buff(nthread);
+    for (size_t thread = 0; thread < nthread; thread++) {
+        ints_buff[thread] = ints[thread]->buffer();
+    }
+
+    double **outp = out->pointer();
+    double **Dp = D->pointer();
+
+#pragma omp parallel for schedule(guided) num_threads(nthread)
+    for (size_t P = 0; P < basisset_->nshell(); P++) {
+        size_t rank = 0;
+#ifdef _OPENMP
+        rank = omp_get_thread_num();
+#endif
+        for (size_t Q = 0; Q <= P; Q++) {
+            ints[rank]->compute_shell_deriv1(P, Q);
+
+            size_t nP = basisset_->shell(P).nfunction();
+            size_t oP = basisset_->shell(P).function_index();
+            size_t aP = basisset_->shell(P).ncenter();
+
+            size_t nQ = basisset_->shell(Q).nfunction();
+            size_t oQ = basisset_->shell(Q).function_index();
+            size_t aQ = basisset_->shell(Q).ncenter();
+
+            size_t offset = nP * nQ;
+            const double *ref = ints_buff[rank];
+	    double elem;
+
+            // Px
+            double Px = 0.0;
+            for (size_t p = 0; p < nP; p++) {
+                for (size_t q = 0; q < nQ; q++) {
+		    elem = Dp[p + oP][q + oQ];
+		    if (P != Q) {
+		        elem += Dp[q + oQ][p + oP];
+		    }
+                    Px += elem * (*ref++);
+                }
+            }
+#pragma omp atomic update
+            outp[aP][0] += Px;
+
+            // Py
+            double Py = 0.0;
+            for (size_t p = 0; p < nP; p++) {
+                for (size_t q = 0; q < nQ; q++) {
+		    elem = Dp[p + oP][q + oQ];
+		    if (P != Q) {
+		        elem += Dp[q + oQ][p + oP];
+		    }
+                    Py += elem * (*ref++);
+                }
+            }
+#pragma omp atomic update
+            outp[aP][1] += Py;
+
+            // Pz
+            double Pz = 0.0;
+            for (size_t p = 0; p < nP; p++) {
+                for (size_t q = 0; q < nQ; q++) {
+		    elem = Dp[p + oP][q + oQ];
+		    if (P != Q) {
+		        elem += Dp[q + oQ][p + oP];
+		    }
+                    Pz += elem * (*ref++);
+                }
+            }
+#pragma omp atomic update
+            outp[aP][2] += Pz;
+
+            // Qx
+            double Qx = 0.0;
+            for (size_t p = 0; p < nP; p++) {
+                for (size_t q = 0; q < nQ; q++) {
+		    elem = Dp[p + oP][q + oQ];
+		    if (P != Q) {
+		        elem += Dp[q + oQ][p + oP];
+		    }
+                    Qx += elem * (*ref++);
+                }
+            }
+#pragma omp atomic update
+            outp[aQ][0] += Qx;
+
+            // Qy
+            double Qy = 0.0;
+            for (size_t p = 0; p < nP; p++) {
+                for (size_t q = 0; q < nQ; q++) {
+		    elem = Dp[p + oP][q + oQ];
+		    if (P != Q) {
+		        elem += Dp[q + oQ][p + oP];
+		    }
+                    Qy += elem * (*ref++);
+                }
+            }
+#pragma omp atomic update
+            outp[aQ][1] += Qy;
+
+            // Qz
+            double Qz = 0.0;
+            for (size_t p = 0; p < nP; p++) {
+                for (size_t q = 0; q < nQ; q++) {
+		    elem = Dp[p + oP][q + oQ];
+		    if (P != Q) {
+		        elem += Dp[q + oQ][p + oP];
+		    }
+                    Qz += elem * (*ref++);
+                }
+            }
+#pragma omp atomic update
+            outp[aQ][2] += Qz;
+        }
+    }
+}
+
 
 SharedMatrix MintsHelper::ao_overlap() {
     // Overlap
@@ -4210,7 +4351,7 @@ SharedMatrix MintsHelper::polarization_integrals_grad(// position of polarizable
   for (size_t i = 0; i < nthread_; i++) {
     ints_vec.push_back(std::shared_ptr<OneBodyAOInt>(integral_->ao_polarization(origin, k, mx,my,mz, alpha, q, 1)));
   }
-  grad_two_center_computer(ints_vec, D, grad);
+  grad_two_center_computer_general(ints_vec, D, grad);
 
   return grad;
 }

@@ -104,6 +104,7 @@ class PSI_API MintsHelper {
     */
     void one_body_ao_computer(std::vector<std::shared_ptr<OneBodyAOInt>> ints, SharedMatrix out, bool symm);
     void grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAOInt>> ints, SharedMatrix D, SharedMatrix out);
+    void grad_two_center_computer_general(std::vector<std::shared_ptr<OneBodyAOInt>> ints, SharedMatrix D, SharedMatrix out);
     /// Helper function to convert ao integrals to so and cache them
     void cache_ao_to_so_ints(SharedMatrix ao_ints, const std::string& label, bool include_perturbation);
     /// Returns true if an integral type is already computed and cached
