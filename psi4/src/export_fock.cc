@@ -39,8 +39,10 @@
 #include "psi4/libmints/vector.h"
 #include "psi4/libmints/basisset.h"
 #include "psi4/libmints/wavefunction.h"
+#include "psi4/libmints/mintshelper.h"
 #include "psi4/libpsi4util/process.h"
 #include "psi4/libscf_solver/sad.h"
+#include "psi4/scfgrad/jk_grad.h"
 
 using namespace psi;
 namespace py = pybind11;
@@ -197,4 +199,19 @@ void export_fock(py::module &m) {
         .def("Db", &scf::SADGuess::Db)
         .def("Ca", &scf::SADGuess::Ca)
         .def("Cb", &scf::SADGuess::Cb);
+
+    // JK gradients
+    py::class_<scfgrad::JKGrad, std::shared_ptr<scfgrad::JKGrad>>(m, "JKGrad", "docstring")
+        .def_static("build_JKGrad",
+                    [](int deriv, std::shared_ptr<MintsHelper> mints) {
+		      return scfgrad::JKGrad::build_JKGrad(deriv, mints);
+                    })
+      .def("set_Ca", &scfgrad::JKGrad::set_Ca)
+      .def("set_Cb", &scfgrad::JKGrad::set_Cb)
+      .def("set_Da", &scfgrad::JKGrad::set_Da)
+      .def("set_Db", &scfgrad::JKGrad::set_Db)
+      .def("set_Dt", &scfgrad::JKGrad::set_Dt)
+      .def("compute_gradient", &scfgrad::JKGrad::compute_gradient)
+      .def("gradients", &scfgrad::JKGrad::gradients)
+      .def("print_header", &scfgrad::JKGrad::print_header);
 }

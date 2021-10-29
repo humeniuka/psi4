@@ -74,7 +74,7 @@ import numpy as np
 import numpy.linalg as la
 
 import psi4
-from psi4.driver.qmmm2epol import PolarizationHamiltonian
+from psi4.driver.qmmm2epol import PolarizationHamiltonian, RHF_QMMM2ePol
 
 class PolarizationHamiltonianGradients(PolarizationHamiltonian):
     """
@@ -434,7 +434,7 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
                     for a in [0,1,2]:
                         for b in [0,1,2]:
                             grad_ipol += dA[3*k+a,3*k+b] * V[k,a,b]
-                grad[self.startPOL + 3*ipol+xyz] += grad_ipol
+                grad[self.startPOL + 3*ipol+xyz] = grad_ipol
 
         return grad
 
@@ -681,7 +681,7 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         FSi = np.einsum('jls,sn->jln', self.F_elec, self.Sinv)
         FSiDt = np.einsum('jln,ml->jmn', FSi, D)
         FFSiDt = np.einsum('imn,jmn->ij', self.F_elec, FSiDt)
-        dHdA = -FnFeD - 0.5*FFSiDt
+        dHdA = -FnFeD - 0.5 * FFSiDt
         # add gradient dA/dx . dH/dA
         grad = self._gradA(dHdA)
 
@@ -692,7 +692,9 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
                 for a in [0,1,2]:
                     for b in [0,1,2]:
                         dHdDiagA[k,a,b] = 0.5 * FFSiDt[3*k+a,3*k+b]
-            # add gradient \xi * d(diagA)/dx . dH/d(diagA)
+            ID = np.einsum('kabmn,mn->kab', self.I_1e, D)
+            dHdDiagA -= 0.5 * ID 
+            # add gradient d(diagA)/dx . dH/d(diagA)
             grad += self._gradDiagA(dHdDiagA)
 
         # 3) dH/dF^(nuc)
@@ -789,5 +791,121 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         # gradient contractions, dKdx = dF/dx . dK/dF + dA/dx . dK/dA
         grad = self._gradFelec(dKdF) + self._gradA(dKdA)
 
+        return grad
+
+
+class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
+    """
+    gradients of the RHF energy
+    """
+
+    # class for instantiating the polarization Hamiltonian, a static variablee
+    PolarizationHamiltonian = PolarizationHamiltonianGradients
+
+    def split_gradient(self, grad):
+        """
+        split gradients into blocks for QM atoms, polarizable sites and point charges
+        """
+        nat  = self.molecule.natom()
+        npol = self.polarizable_atoms.natom()
+        nchg = self.point_charges.natom()
+        
+        grad_QM  = grad[     :3*nat                ]
+        grad_POL = grad[      3*nat:3*(nat+npol)   ]
+        grad_CHG = grad[            3*(nat+npol):  ]
+        return grad_QM, grad_POL, grad_CHG
+
+    def gradients(self):
+        """
+        Compute the gradient of the RHF energy
+
+                     core                                               nuc
+        d E_RHF   d H             dS          dJ            dK        dV
+        ------- = ------- (D)  -  --(W) + 1/2 --(D,D) - 1/4 --(D,D) + --
+          d x      d x            dx          dx            dx        dx
+
+        where D is the converged SCF density.
+
+        Returns
+        -------
+        grad     :  (ngrad,) vector
+          gradient w/r/t QM atoms, polarizable sites and point charges,
+          see `_gradient_dimensions()` for more information
+        """
+        # density matrix
+        # MO coefficients of doubly occupied orbitals
+        Cocc = self.C[:,:self.ndocc]
+        # density matrix in AO basis
+        D = 2 * np.einsum('ai,bi->ab', Cocc, Cocc)
+        # energy-weighted density matrix
+        W = 2 * np.einsum('ai,bi,i->ab', Cocc, Cocc, self.e[:self.ndocc])
+
+        # convert to psi4 matrix objects
+
+        # density of spin-up electrons
+        Da = psi4.core.Matrix.from_array(0.5*D)
+        # density of spin-down electrons
+        Db = psi4.core.Matrix.from_array(0.5*D)
+        # total electron density
+        Dt = psi4.core.Matrix.from_array(D)
+        Wt = psi4.core.Matrix.from_array(W)
+
+        # gradient of core Hamiltonian
+        dHdx = self.mints.kinetic_grad(Dt).np + self.mints.potential_grad(Dt).np
+        dSdx = self.mints.overlap_grad(Wt).np
+
+        # dJ/dx(D,D) and dK/dx(D,D)
+        jk_grad = psi4.core.JKGrad.build_JKGrad(1, self.mints)
+        jk_grad.set_Ca(psi4.core.Matrix.from_array(Cocc))
+        jk_grad.set_Cb(psi4.core.Matrix.from_array(Cocc))
+        jk_grad.set_Da(Da)
+        jk_grad.set_Db(Db)
+        jk_grad.set_Dt(Dt)
+        jk_grad.compute_gradient()
+
+        gradients_JK = jk_grad.gradients()
+        # psi4's definition of dJ/dx and dK/dx contains a factor of 1/2, i.e.
+        #   dJ/dx(D1,D2) = 1/2 sum_{m,n,p,q} D1_{m,n} d( (mn|pq) )/dx D2_{p,q}
+        dJdx = 2.0 * gradients_JK["Coulomb"].np
+        # I am not sure why we need a factor of 4 instead of 2 here?
+        dKdx = 4.0 * gradients_JK["Exchange"].np
+
+        # nuclear gradients
+        dEnucDx = self.molecule.nuclear_repulsion_energy_deriv1().np
+
+        # total gradient of plain RHF energy
+        dEdx = dEnucDx + dHdx - dSdx + 0.5 * dJdx - 0.25 * dKdx 
+
+        # psi4 gradients have dimension (Nat, 3)
+        dEdx = dEdx.flatten()
+
+        # add gradients from polarization energy
+        if not self.polham is None:
+            # self.polham is an instance of the class `PolarizationHamiltonianGradients` 
+
+            # 0-electron part
+            dEnucDx_ = self.polham.zero_electron_part_GRAD()
+            # 1-electron part
+            dHdx_ = self.polham.one_electron_part_GRAD(D)
+            # Coulomb and exchange operators d(\Delta J)/dx(D,D) and d(\Delta K)/dx(D,D)
+            dJdx_ = self.polham.coulomb_J_GRAD(D,D)
+            dKdx_ = self.polham.exchange_K_GRAD(D,D)
+
+            # gradient of polarization energy
+            dEdx_ = dHdx_ + 0.5 * dJdx_ - 0.25 * dKdx_ + dEnucDx_
+
+            # split gradient of polarization energy into different blocks (QM atoms, polarizable sites, point charges)
+            grad_QM, grad_POL, grad_CHG = self.split_gradient(dEdx_)
+            # and add gradient from plain RHF energy on QM atoms
+            grad_QM += dEdx
+
+        else:
+            # RHF energy only depends on QM atoms
+            grad_QM = dEdx
+            grad_POL = np.zeros(3*self.polarizable_atoms.natom())
+            grad_CHG = np.zeros(3*self.point_charges.natom())
+
+        # combine gradients into single vector
+        grad = np.hstack((grad_QM, grad_POL, grad_CHG))
         return grad
 

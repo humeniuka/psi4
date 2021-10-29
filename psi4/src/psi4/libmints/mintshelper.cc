@@ -2222,7 +2222,9 @@ SharedMatrix MintsHelper::overlap_grad(SharedMatrix D) {
     for (size_t i = 0; i < nthread_; i++) {
         ints_vec.push_back(std::shared_ptr<OneBodyAOInt>(integral_->ao_overlap(1)));
     }
-    grad_two_center_computer(ints_vec, D, overlap_mat);
+    //grad_two_center_computer(ints_vec, D, overlap_mat);
+    // Make sure gradients also work for non-symmetric, generalized density matrices D.
+    grad_two_center_computer_general(ints_vec, D, overlap_mat);
     return overlap_mat;
 }
 SharedMatrix MintsHelper::perturb_grad(SharedMatrix D) {

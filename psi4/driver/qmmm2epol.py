@@ -719,6 +719,10 @@ class SCFNotConverged(Exception):
     pass
     
 class RHF_QMMM2ePol(object):
+
+    # class for instantiating the polarization Hamiltonian, a static variablee
+    PolarizationHamiltonian = PolarizationHamiltonian
+
     def __init__(self, molecule, polarizable_atoms, point_charges,
                  basis='cc-pVDZ',
                  continue_anyway=False, qmmm=False, **kwds):
@@ -765,11 +769,14 @@ class RHF_QMMM2ePol(object):
         basis = wfn.basisset()
         ribasis = basis
 
+        # amount of information written to console
+        self.verbose = kwds.get("verbose", 1)
+
         # Polarization Hamiltonian
         if polarizable_atoms.natom() > 0:
-            polham = PolarizationHamiltonian(molecule, basis, ribasis,
-                                             polarizable_atoms, point_charges,
-                                             **kwds)
+            polham = self.PolarizationHamiltonian(molecule, basis, ribasis,
+                                                  polarizable_atoms, point_charges,
+                                                  **kwds)
         else:
             polham = None
 
@@ -833,7 +840,8 @@ class RHF_QMMM2ePol(object):
         jk = psi4.core.JK.build(basis, jk_type="PK")
         jk.set_memory(int(1.25e8))  # 1GB
         jk.initialize()
-        jk.print_header()
+        if (self.verbose > 0):
+            jk.print_header()
 
         # number of occupied orbitals
         ndocc = wfn.nalpha()
@@ -898,9 +906,11 @@ class RHF_QMMM2ePol(object):
             SCF_E = 0.5 * np.einsum('pq,pq->', F + H, D) + Enuc
 
             dE = abs(SCF_E - Eold)
-            print('SCF Iteration %3d: Energy = %20.16f   dE = %10.5E   dRMS = %10.5E' % (SCF_ITER, SCF_E, (SCF_E - Eold), dRMS))
+            if (self.verbose > 0):
+                print('SCF Iteration %3d: Energy = %20.16f   dE = %10.5E   dRMS = %10.5E' % (SCF_ITER, SCF_E, (SCF_E - Eold), dRMS))
             if (abs(dE < E_conv) and (dRMS < diis_conv)):
-                print("SCF CONVERGED")
+                if self.verbose > 0:
+                    print("SCF CONVERGED")
                 break
 
             Eold = SCF_E
@@ -926,10 +936,14 @@ class RHF_QMMM2ePol(object):
                     psi4.core.clean()
                     raise SCFNotConverged("Maximum number of SCF cycles exceeded.")
 
-        print('Total time for SCF iterations: %.3f seconds \n' % (time.time() - time_start))
+        if (self.verbose > 0):
+            print('Total time for SCF iterations: %.3f seconds \n' % (time.time() - time_start))
 
         # store QM geometry
         self.molecule = molecule
+        # store polarizable atoms and point charges, these are just empty molecules, if there are none
+        self.polarizable_atoms = polarizable_atoms
+        self.point_charges = point_charges
         # and basis set
         self.basis = basis
         # number of atomic and molecular orbitals
@@ -1097,9 +1111,10 @@ class RHF_QMMM2ePol(object):
             h1_fzc = np.einsum('ab,ai,bj->ij', h1_fzc_ao, self.C, self.C)
             # add interaction between valence electrons and frozen core to one-electron part
             h1 += h1_fzc
-            
-            print(f"number of core orbitals  : {ncore}")
-            print(f"frozen core energy : {Efzc} Hartree")
+
+            if (self.verbose > 0):
+                print(f"number of core orbitals  : {ncore}")
+                print(f"frozen core energy : {Efzc} Hartree")
             nc = ncore
             
             h0 = self.Enuc + Efzc

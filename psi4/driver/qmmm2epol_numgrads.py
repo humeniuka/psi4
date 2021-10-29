@@ -27,15 +27,16 @@
 #
 
 """
-Helper class for computing numerical gradients of the polarization Hamiltonian (for debugging purposes only)
+Helper class for computing numerical gradients of the polarization Hamiltonian 
+and RHF+QM/MM-2e-Pol energy (for debugging purposes only)
 """
 
 import numpy as np
 import numpy.linalg as la
 import psi4
 
-from psi4.driver.qmmm2epol import PolarizationHamiltonian
-from psi4.driver.qmmm2epol_gradients import PolarizationHamiltonianGradients
+from psi4.driver.qmmm2epol import PolarizationHamiltonian, RHF_QMMM2ePol
+from psi4.driver.qmmm2epol_gradients import PolarizationHamiltonianGradients, RHF_QMMM2ePolGradients
 
 
 class GradientComparison:
@@ -868,6 +869,149 @@ class GradientComparison:
         print(grad_CHG_NUM)
         print(f" Error: {err_CHG}")
 
+
+        assert err_QM  < 1.0e-5
+        assert err_POL < 1.0e-5
+        assert err_CHG < 1.0e-5
+
+        # all tests passed
+        return True
+
+class GradientComparisonRHF:
+    def __init__(self, *args, **kwds):
+        """
+        The positional arguments and keywords are the same as those of the constructor of 
+        the classes `RHF_QMMM2ePol` and `RHF_QMMM2ePolGradients`
+        """
+        self.args = args
+        self.kwds = kwds
+    def compare_energy_gradients(self):
+        """
+        compare analytical and numerical gradients of the RHF+QM/MM-2e-Pol energy
+
+        The function computes the gradients
+         * on QM atoms
+         * polarizable sites and
+         * point charges
+        first analytically and then by a two-point finite difference formula.
+
+        Example
+        -------
+        >>> ...
+        >>> G = GradientComparison(molecule, polarizable_atoms, point_charges, basis)
+        >>> G.compare_energy_gradients()
+
+        """
+        rhf_grad = RHF_QMMM2ePolGradients(*self.args, **self.kwds)
+        
+        molecule = self.args[0]
+
+        # analytical gradients
+        grad = rhf_grad.gradients()
+        grad_QM, grad_POL, grad_CHG = rhf_grad.split_gradient(grad)
+        
+        # Step size for finite differences
+        step = 0.001
+
+        # numerical gradient on QM atoms
+        grad_QM_NUM = [None for k in range(0, 3*molecule.natom())]
+        for i in range(0, molecule.natom()):
+            for xyz in [0,1,2]:
+                def shift_coords(step):
+                    molecule_ = molecule.clone()
+                    coords = molecule_.geometry().np
+                    coords[i,xyz] += step
+                    molecule_.set_geometry(psi4.core.Matrix.from_array(coords))
+                    args_ = list(self.args[:])
+                    args_[0] = molecule_
+                    rhf = RHF_QMMM2ePol(*args_, **self.kwds)
+                    return rhf
+                # f(x+dx)
+                en_plus = shift_coords(step).energy
+                # f(x-dx)
+                en_minus = shift_coords(-step).energy
+                # df/dx = (f(x+dx) - f(x-dx))/(2 dx)
+                grad_QM_NUM[3*i+xyz] = (en_plus - en_minus)/(2*step)
+
+        grad_QM = np.array(grad_QM)
+        grad_QM_NUM = np.array(grad_QM_NUM)
+        err_QM = la.norm(grad_QM - grad_QM_NUM)
+
+
+        # numerical gradient on polarizable sites
+        polarizable_atoms = self.args[1]
+
+        grad_POL_NUM = [None for k in range(0, 3*polarizable_atoms.natom())]
+        for i in range(0, polarizable_atoms.natom()):
+            for xyz in [0,1,2]:
+                def shift_coords(step):
+                    polarizable_atoms_ = polarizable_atoms.clone()
+                    coords = polarizable_atoms_.geometry().np
+                    coords[i,xyz] += step
+                    polarizable_atoms_.set_geometry(psi4.core.Matrix.from_array(coords))
+                    args_ = list(self.args[:])
+                    args_[1] = polarizable_atoms_
+                    rhf = RHF_QMMM2ePol(*args_, **self.kwds)
+                    return rhf
+                # f(x+dx)
+                en_plus = shift_coords(step).energy
+                # f(x-dx)
+                en_minus = shift_coords(-step).energy
+                # df/dx = (f(x+dx) - f(x-dx))/(2 dx)
+                grad_POL_NUM[3*i+xyz] = (en_plus - en_minus)/(2*step)
+
+        grad_POL = np.array(grad_POL)
+        grad_POL_NUM = np.array(grad_POL_NUM)
+        err_POL = la.norm(grad_POL - grad_POL_NUM)
+
+
+        # numerical gradient on point charges
+        point_charges = self.args[2]
+
+        grad_CHG_NUM = [None for k in range(0, 3*point_charges.natom())]
+        for i in range(0, point_charges.natom()):
+            for xyz in [0,1,2]:
+                def shift_coords(step):
+                    point_charges_ = point_charges.clone()
+                    coords = point_charges_.geometry().np
+                    coords[i,xyz] += step
+                    point_charges_.set_geometry(psi4.core.Matrix.from_array(coords))
+                    args_ = list(self.args[:])
+                    args_[2] = point_charges_
+                    rhf = RHF_QMMM2ePol(*args_, **self.kwds)
+                    return rhf
+                # f(x+dx)
+                en_plus = shift_coords(step).energy
+                # f(x-dx)
+                en_minus = shift_coords(-step).energy
+                # df/dx = (f(x+dx) - f(x-dx))/(2 dx)
+                grad_CHG_NUM[3*i+xyz] = (en_plus - en_minus)/(2*step)
+
+        grad_CHG = np.array(grad_CHG)
+        grad_CHG_NUM = np.array(grad_CHG_NUM)
+        err_CHG = la.norm(grad_CHG - grad_CHG_NUM)
+
+
+        print(f"+++ Gradient of RHF energy on QM atoms +++")
+        print(" Analytical:")
+        print(grad_QM)
+        print(" Numerical:")
+        print(grad_QM_NUM)
+        print(f" Error: {err_QM}")
+
+        print(f"+++ Gradient of RHF on polarizable sites +++")
+        print(" Analytical:")
+        print(grad_POL)
+        print(" Numerical:")
+        print(grad_POL_NUM)
+        print(f" Error: {err_POL}")
+
+        print(f"+++ Gradient of RHF energy on point charges +++")
+        print(" Analytical:")
+        print(grad_CHG)
+        print(" Numerical:")
+        print(grad_CHG_NUM)
+        print(f" Error: {err_CHG}")
 
         assert err_QM  < 1.0e-5
         assert err_POL < 1.0e-5
