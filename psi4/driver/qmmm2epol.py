@@ -51,7 +51,7 @@ import itertools
 import psi4
 from psi4 import core
 
-# atomic dipole polarizabilities in bohr^3
+# atomic dipole polarizabilities in Bohr^3
 _theoretical_polarizabilities = {
     # He: theoretical value at FCI/cc-pVDZ level of theory
     "HE" :  0.30274713
@@ -118,7 +118,7 @@ class PolarizationHamiltonian(object):
           `point_charges.set_nuclearo_charge(atom_id, charge)`
 
         polarizabilities    :  dict
-          dictionary with atomic polarizabilities for each atom type
+          dictionary with atomic polarizabilities for each atom type (in Bohr^3)
         cutoff_alpha        :  float
           exponent alpha in cutoff function C(r)=(1-exp(-alpha r^2))^q
         same_site_integrals :  str
@@ -202,7 +202,7 @@ class PolarizationHamiltonian(object):
         Returns
         -------
         alpha   :  np.ndarray (Npol,)
-          atomic polarizabilities in bohr^3
+          atomic polarizabilities in Bohr^3
         """
         alpha = np.zeros(self.npol)
         for i in range(0, self.npol):
@@ -308,7 +308,7 @@ class PolarizationHamiltonian(object):
         if self.verbose > 0:
             print(f""" 
 
-   Total dipole polarizability alpha_mol of MM part (in bohr^3)
+   Total dipole polarizability alpha_mol of MM part (in Bohr^3)
 
                X        Y        Z
         X  {a[0,0]:+8.4f} {a[0,1]:+8.4f} {a[0,2]:+8.4f} 

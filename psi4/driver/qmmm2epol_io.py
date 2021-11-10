@@ -74,6 +74,11 @@ def amber2psi4(prmtop_file, rst7_file, qmregion_file):
             molecule_str += atom_str
         else:
             pol = param_data["POLARIZABILITY"][atom.idx]
+            # Polarizabilities in the AMBER topology file are in Ang^3,
+            # we need to convert them to atomic units (Bohr^3).
+            BohrToAng = 0.52917724924
+            pol *= pow(1.0/BohrToAng, 3)
+
             if (pol > 0.0):
                 polarizable_atoms_str += atom_str
                 if atom.name in polarizabilities:

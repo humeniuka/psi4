@@ -216,7 +216,7 @@ def test_RHF_QMMM2ePol_energy_gradients():
     # run closed-shell SCF calculation
     grad_comp = GradientComparisonRHF(molecule, polarizable_atoms, point_charges, 'sto-3g',
                                       polarizabilities=polarizabilities,
-                                      same_site_integrals="R.I.",
+                                      same_site_integrals="exact", #"R.I.",
                                       verbose=0)
 
     # compute analytical and numerical QM gradients and compare them

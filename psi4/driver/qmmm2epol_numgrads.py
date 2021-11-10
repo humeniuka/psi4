@@ -38,7 +38,6 @@ import psi4
 from psi4.driver.qmmm2epol import PolarizationHamiltonian, RHF_QMMM2ePol
 from psi4.driver.qmmm2epol_gradients import PolarizationHamiltonianGradients, RHF_QMMM2ePolGradients
 
-
 class GradientComparison:
     def __init__(self, *args, **kwds):
         """
@@ -528,7 +527,7 @@ class GradientComparison:
         print(grad_POL_NUM)
         print(f" Error: {err_POL}")
 
-        assert err_POL < 1.0e-5
+        assert err_POL < 1.0e-4
 
         # all tests passed
         return True
