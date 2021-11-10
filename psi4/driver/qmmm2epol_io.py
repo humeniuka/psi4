@@ -56,6 +56,9 @@ def amber2psi4(prmtop_file, rst7_file, qmregion_file):
 
     param_data = dict( (key, np.array(val)) for (key, val) in top.parm_data.items() )
 
+    if len(param_data['EXCLUDED_ATOMS_LIST']) > 0:
+        print("NOTE: Topology file contains non-empty exclusion list, but exclusion lists are not supported yet.")
+
     # split system into 
     #  * QM atoms
     #  * point charges (without nuclei)
