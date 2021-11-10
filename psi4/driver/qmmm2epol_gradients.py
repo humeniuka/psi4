@@ -124,7 +124,7 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         grad_CHG = grad[self.startCHG:             ]
         return grad_QM, grad_POL, grad_CHG
 
-    def _monopole_damping(self, r, alpha):
+    def _damping_function(self, r, alpha):
         # undamped field of a monopole
         f = 1.0
         df = 0.0
@@ -177,7 +177,7 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
             # The damping function removes the divergence at r = 0.0
             return dF
 
-        damp, damp_deriv = self._monopole_damping(r, polarizability)
+        damp, damp_deriv = self._damping_function(r, polarizability)
 
         # loop over x,y,z
         for a in [0,1,2]:
