@@ -261,7 +261,7 @@ void PolarizationInt::compute_pair_deriv1(// shells of orbitals in bra and ket
 		Gradients w/r/t the polarizable site, dI/drC, are not stored in the buffer
 		as they can be assembled easily from the gradients w/r/t the bra and ket centers.
 	      */
-
+	     
 	      // x-coordinates of gradients
 	      // dI/dx1
 	      buffer_[center_1_start + (0 * size) + ao12] += cc * gxA;

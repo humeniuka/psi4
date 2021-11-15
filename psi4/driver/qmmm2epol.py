@@ -119,7 +119,7 @@ class PolarizationHamiltonian(object):
 
         polarizabilities    :  dict
           dictionary with atomic polarizabilities for each atom type (in Bohr^3)
-        cutoff_alpha        :  float
+        cutoff_alpha        :  float (in Bohr)
           exponent alpha in cutoff function C(r)=(1-exp(-alpha r^2))^q
         same_site_integrals :  str
           'exact' - use analytically exact polarization integrals whenever possible

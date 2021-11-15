@@ -537,7 +537,7 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
 
         return grad
 
-    def _gradI(self, Y):
+    def _gradI1e(self, Y):
         """
         gradient of the contraction of the exact same-site integrals I^(elec)
         with a (Npol x 3 x 3 x Nao x Nao) tensor Y
@@ -550,6 +550,7 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         ----------
         Y      :   (npol, 3, 3, nbf, nbf) np.ndarray
           partial derivatives df/dI_{k,a,b,m,n} of some function f(I^(elec), ...)
+          Y is assumed to be symmetric in the 2nd and 3rd indices, Y[:,a,b,:,:]  = Y[:,b,a,:,:]
 
         Returns
         -------
@@ -716,7 +717,7 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         if (self.same_site_integrals == 'exact'):
             # 5) dH/dI^(elec)
             dHdI = -0.5 * np.einsum('kab,mn->kabmn', diagA_nonzero, D)
-            grad += self._gradI(dHdI)
+            grad += self._gradI1e(dHdI)
 
         # 6) dH/dS, partial derivatives w/r/t overlap matrix S
         FSiD = np.einsum('igm,gl->ilm', FSi, D)
