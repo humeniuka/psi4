@@ -74,6 +74,7 @@ import numpy as np
 import numpy.linalg as la
 
 import psi4
+from psi4 import core
 from psi4.driver.qmmm2epol import PolarizationHamiltonian, RHF_QMMM2ePol
 
 class PolarizationHamiltonianGradients(PolarizationHamiltonian):
@@ -647,6 +648,10 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         K = -np.einsum('ij,j->i', self.A, self.F_nucl)
         L = -0.5*np.einsum('i,j->ij', self.F_nucl, self.F_nucl)
         grad = self._gradFnucl(K) + self._gradA(L)
+        ### DEBUG
+        print("zero_electron_part_GRAD")
+        print(grad)
+        ###
         return grad
 
     def one_electron_part_GRAD(self, D):
@@ -715,8 +720,9 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         grad += self._gradFelec(dHdFe)
 
         if (self.same_site_integrals == 'exact'):
-            # 5) dH/dI^(elec)
+            # 5) dH/dI^(1e)
             dHdI = -0.5 * np.einsum('kab,mn->kabmn', diagA_nonzero, D)
+            # add gradient dI^(1)/dx . dH/dI^(1)
             grad += self._gradI1e(dHdI)
 
         # 6) dH/dS, partial derivatives w/r/t overlap matrix S
@@ -724,8 +730,13 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         AFSi = np.einsum('ij,jln->iln', Abar, FSi)
         dHdS = 0.5 * np.einsum('ilm,iln->mn', FSiD, AFSi)
 
-        # add gradietn dS/dx . dH/dS
+        # add gradient dS/dx . dH/dS
         grad += self._gradS(dHdS)
+
+        ### DEBUG
+        print("one_electron_part_GRAD")
+        print(grad)
+        ###
 
         return grad
 
@@ -758,6 +769,12 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         dJdA = -np.einsum('i,j->ij', FD1, FD2)
         # evaluate contractions, dJdx = dF/dx . dJ/dF + dA/dx . dJ/dA
         grad = self._gradFelec(dJdF) + self._gradA(dJdA)
+
+        ### DEBUG
+        print("coulomb_J_GRAD")
+        print(grad)
+        ###
+
         return grad
 
     def exchange_K_GRAD(self, D1, D2):
@@ -792,6 +809,11 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         # gradient contractions, dKdx = dF/dx . dK/dF + dA/dx . dK/dA
         grad = self._gradFelec(dKdF) + self._gradA(dKdA)
 
+        ### DEBUG
+        print("exchange_K_GRAD")
+        print(grad)
+        ###
+
         return grad
 
 
@@ -815,6 +837,58 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
         grad_POL = grad[      3*nat:3*(nat+npol)   ]
         grad_CHG = grad[            3*(nat+npol):  ]
         return grad_QM, grad_POL, grad_CHG
+
+    def _electrostatic_embedding_GRAD(self, point_charges, basis, D):
+        """
+        contraction of the gradient of the electrostatic potential matrix with a density matrix
+
+                                      (ext)  
+          gradVext(D) = sum   { grad  V    }  D
+                           ij          ij      ij
+
+        The point charge must have been set with 
+        `point_charges.set_nuclear_charge(atom_idx, Qc)`
+
+        Parameters
+        ----------
+        D         :   (nAO, nAO) matrix
+          density matrix
+
+        Returns
+        -------
+        grad_QM   :  (3*nQM,) vector
+          gradient on QM atoms
+        grad_CHG  :  (3*<num. point charges>,) vector
+          gradient on point charges
+        """
+        # total electron density
+        Dt = psi4.core.Matrix.from_array(D)
+
+        grad_QM = np.zeros(3*self.molecule.natom())
+        grad_CHG = np.zeros(3*point_charges.natom())
+        # The origin of the coordinte system can be shifted to the position
+        # of the point charge Rc:
+        #
+        #   (ext)              Qc                     Q
+        #  V      =  sum  <i|------|j>  = <i(r'+Rc)| --- |j(r'+Rc) >    with r' = r-Rc
+        #   ij        c      |r-Rc|                   r'
+        #
+        # Therefore the gradient w/r/t to Rc is equal to (-1) times the sum of the gradientw w/r/t
+        # to the centers of the orbitals, Ri and Rj:
+        #
+        #   d/d(Rc) V   = - d/d(Ri) V   - d/d(Rj) V
+        #            ij              ij            ij
+        for ichg in range(0, point_charges.natom()):
+            epot = core.ExternalPotential()
+            epot.addCharge(point_charges.Z(ichg),
+                           point_charges.x(ichg),
+                           point_charges.y(ichg),
+                           point_charges.z(ichg))
+            dVdx = epot.computePotentialGradients(self.basis, Dt).np
+            grad_QM += dVdx.flatten()
+            grad_CHG[3*ichg:3*(ichg+1)] -= np.sum(dVdx, axis=0)
+
+        return grad_QM, grad_CHG
 
     def gradients(self):
         """
@@ -905,6 +979,26 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
             grad_QM = dEdx
             grad_POL = np.zeros(3*self.polarizable_atoms.natom())
             grad_CHG = np.zeros(3*self.point_charges.natom())
+
+        # add gradients from electrostatic embedding
+        if (self.qmmm == True) and (self.point_charges.natom() > 0):
+            # Apparently there is a bug (or at least inconsistency) in psi4's way of computing
+            # the external potential due to point charges. It checks the units of the molecule
+            # and converts the positions of the point charges to Bohr. However, this conversion
+            # seems to have already happened at an earlier stage. Therefore we have to set the units 
+            # temporarily to Bohr.
+            units = self.point_charges.units()
+            self.point_charges.set_units(psi4.core.GeometryUnits.Bohr)
+
+            # gradient from external potential due to MM point charges
+            dVextDx_QM, dVextDx_CHG = self._electrostatic_embedding_GRAD(self.point_charges, self.basis, D)
+            grad_QM  += dVextDx_QM
+            grad_CHG += dVextDx_CHG
+
+            # revert to previous units if needed
+            if (units == "Angstrom"):
+                self.point_charges.set_units(psi4.core.GeometryUnits.Angstrom)
+
 
         # combine gradients into single vector
         grad = np.hstack((grad_QM, grad_POL, grad_CHG))

@@ -1593,6 +1593,8 @@ D            :    matrix
         .def("clear", &ExternalPotential::clear, "Reset the field to zero (eliminates all entries)")
         .def("computePotentialMatrix", &ExternalPotential::computePotentialMatrix,
              "Compute the external potential matrix in the given basis set", "basis"_a)
+        .def("computePotentialGradients", &ExternalPotential::computePotentialGradients,
+             "Compute the gradients due to the external potential", "basis"_a, "Dt"_a)
         .def("print_out", &ExternalPotential::py_print, "Print python print helper to the outfile");
 
     typedef std::shared_ptr<Localizer> (*localizer_with_type)(const std::string&, std::shared_ptr<BasisSet>,

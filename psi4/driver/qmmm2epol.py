@@ -790,7 +790,8 @@ class RHF_QMMM2ePol(object):
         T = mints.ao_kinetic().np
         H = V + T
         # QM/MM electrostatic embedding
-        if (qmmm == True):
+        self.qmmm = qmmm
+        if (qmmm == True) and (point_charges.natom() > 0):
             # Apparently there is a bug (or at least inconsistency) in psi4's way of computing
             # the external potential due to point charges. It checks the units of the molecule
             # and converts the positions of the point charges to Bohr. However, this conversion
@@ -811,14 +812,19 @@ class RHF_QMMM2ePol(object):
 
             """
             # add repulsion between point charges to nuclear energy
-            # need to use exclusion list !!!
+            # No exclusion list is used.
+            Enuc_mm = 0.0
             for i in range(0, point_charges.natom()):
                 Ri = point_charges.xyz(i)
                 Zi = point_charges.Z(i)
                 for j in range(i+1, point_charges.natom()):
                     Rj = point_charges.xyz(j)
                     Zj = point_charges.Z(j)
-                    Enuc += Zi*Zj/Ri.distance(Rj)
+                    Enuc_mm += Zi*Zj/Ri.distance(Rj)
+            Enuc += Enuc_mm
+
+            if (verbose > 0):
+                print('nuclear repulsion between MM charges : %e Hartree' % Enuc_mm)
             """
 
         if not polham is None:

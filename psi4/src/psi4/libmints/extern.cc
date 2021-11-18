@@ -322,7 +322,7 @@ SharedMatrix ExternalPotential::computePotentialGradients(std::shared_ptr<BasisS
         int nQ = basis->shell(Q).nfunction();
         int oQ = basis->shell(Q).function_index();
 
-        double perm = (P == Q ? 1.0 : 2.0);
+        //double perm = (P == Q ? 1.0 : 2.0);
 
         double **Vp = Vtemps[thread]->pointer();
         double **Dp = Dt->pointer();
@@ -333,7 +333,14 @@ SharedMatrix ExternalPotential::computePotentialGradients(std::shared_ptr<BasisS
             const double *ref2 = &buffer[3 * A * nP * nQ + 2 * nP * nQ];
             for (int p = 0; p < nP; p++) {
                 for (int q = 0; q < nQ; q++) {
-                    double Vval = perm * Dp[p + oP][q + oQ];
+		    // double Vval = perm * Dp[p + oP][q + oQ];
+		    // A. Humeniuk: density matrix is not necessarily symmetric
+		    double Vval;
+		    if (P == Q) {
+		      Vval = Dp[p + oP][q + oQ];
+		    } else {
+		      Vval = Dp[p + oP][q + oQ] + Dp[q + oQ][p + oP];
+		    }
                     Vp[A][0] += Vval * (*ref0++);
                     Vp[A][1] += Vval * (*ref1++);
                     Vp[A][2] += Vval * (*ref2++);
