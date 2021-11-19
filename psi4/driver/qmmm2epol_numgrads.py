@@ -304,7 +304,7 @@ class GradientComparison:
         molecule, basis, ribasis, polarizable_atoms = self.args[0:4]
 
         # analytical gradient on QM atoms and point charges
-        grad = polham_grad._gradI(Y)
+        grad = polham_grad._gradI1e(Y)
         grad_QM, grad_POL, grad_CHG = polham_grad.split_gradient(grad)
 
         assert la.norm(grad_CHG) == 0.0
