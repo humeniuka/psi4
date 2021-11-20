@@ -929,7 +929,7 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
                 Zn = molecule.Z(n)
                 # loop over point charges
                 for c in range(0, point_charges.natom()):
-                    Qc = point_charges.Z(n)
+                    Qc = point_charges.Z(c)
                     rvec = Rnuc[n,:] - Rchrg[c,:]
                     r = la.norm(rvec)
 

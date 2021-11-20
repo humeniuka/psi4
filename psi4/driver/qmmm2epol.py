@@ -810,27 +810,11 @@ class RHF_QMMM2ePol(object):
                 point_charges.set_units(psi4.core.GeometryUnits.Angstrom)
 
             # electrostatic energy of nuclei in the field of point charges
-            Enuc += self._electrostatic_embedding_nuclei(molecule, point_charges)
+            Enuc_ext = self._electrostatic_embedding_nuclei(molecule, point_charges)
+            Enuc += Enuc_ext
 
             # The electrostatic interaction among the external point charges themselves is not
             # included.
-
-            """
-            # add repulsion between point charges to nuclear energy
-            # No exclusion list is used.
-            Enuc_mm = 0.0
-            for i in range(0, point_charges.natom()):
-                Ri = point_charges.xyz(i)
-                Zi = point_charges.Z(i)
-                for j in range(i+1, point_charges.natom()):
-                    Rj = point_charges.xyz(j)
-                    Zj = point_charges.Z(j)
-                    Enuc_mm += Zi*Zj/Ri.distance(Rj)
-            Enuc += Enuc_mm
-
-            if (verbose > 0):
-                print('nuclear repulsion between MM charges : %e Hartree' % Enuc_mm)
-            """
 
         if not polham is None:
             # add one-electron part of polarization potential to core Hamiltonian
@@ -838,7 +822,7 @@ class RHF_QMMM2ePol(object):
             H += Vpol
             # nuclear part of polarization Hamiltonian
             Enuc += polham.zero_electron_part()
-
+            
         # overlap matrix in AO basis
         S = mints.ao_overlap().np
         # Loewdin orthogonalization
@@ -1050,10 +1034,10 @@ class RHF_QMMM2ePol(object):
 
         Returns
         -------
-        Eext_nuc        :   float
+        Enuc_ext        :   float
           Coulomb energy between nuclei and external point charges
         """
-        Eext_nuc = 0.0
+        Enuc_ext = 0.0
         if (point_charges.natom() > 0):
             Rnuc = molecule.geometry().np
             Rchrg = point_charges.geometry().np
@@ -1062,13 +1046,14 @@ class RHF_QMMM2ePol(object):
                 Zn = molecule.Z(n)
                 # loop over point charges
                 for c in range(0, point_charges.natom()):
-                    Qc = point_charges.Z(n)
+                    Qc = point_charges.Z(c)
                     rvec = Rnuc[n,:] - Rchrg[c,:]
                     r = la.norm(rvec)
+                    dE = Zn*Qc/r
 
-                    Eext_nuc += Zn*Qc/r
+                    Enuc_ext += dE
 
-        return Eext_nuc
+        return Enuc_ext
 
     def _frozen_core_approximation(self, Ccore):
         """
