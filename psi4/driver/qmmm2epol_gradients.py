@@ -838,7 +838,7 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
         grad_CHG = grad[            3*(nat+npol):  ]
         return grad_QM, grad_POL, grad_CHG
 
-    def _electrostatic_embedding_GRAD(self, point_charges, basis, D):
+    def _electrostatic_embedding_electrons_GRAD(self, point_charges, basis, D):
         """
         contraction of the gradient of the electrostatic potential matrix with a density matrix
 
@@ -851,7 +851,11 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
 
         Parameters
         ----------
-        D         :   (nAO, nAO) matrix
+        point_charges   :   psi4.core.Molecule
+          external point charges
+        basis           :   psi4.core.BasisSet
+          basis set with atomic orbitals
+        D               :   (nAO, nAO) matrix
           density matrix
 
         Returns
@@ -884,9 +888,53 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
                            point_charges.x(ichg),
                            point_charges.y(ichg),
                            point_charges.z(ichg))
-            dVdx = epot.computePotentialGradients(self.basis, Dt).np
+            dVdx = epot.computePotentialGradients(self.basis, Dt, False).np
             grad_QM += dVdx.flatten()
             grad_CHG[3*ichg:3*(ichg+1)] -= np.sum(dVdx, axis=0)
+
+        return grad_QM, grad_CHG
+
+    def _electrostatic_embedding_nuclei_GRAD(self, molecule, point_charges):
+        """
+        gradients of electrostatic energy of nuclei (n=1,...,natom) in the field of the external point charges (c=1,...,<num. point charges>)
+
+                (ext)                  Zn * Qc
+          grad E      =  sum sum grad --------
+                nuc       n   c        |Rn-Rc|
+
+        The point charge must have been set with 
+        `point_charges.set_nuclear_charge(atom_idx, Qc)`
+
+        Parameters
+        ----------
+        molecule        :   psi4.core.Molecule
+          QM region with nuclei
+        point_charges   :   psi4.core.Molecule
+          external point charges
+
+        Returns
+        -------
+        grad_QM   :  (3*nQM,) vector
+          gradient on QM atoms
+        grad_CHG  :  (3*<num. point charges>,) vector
+          gradient on point charges        
+        """
+        grad_QM = np.zeros(3*molecule.natom())
+        grad_CHG = np.zeros(3*point_charges.natom())
+        if (point_charges.natom() > 0):
+            Rnuc = molecule.geometry().np
+            Rchrg = point_charges.geometry().np
+            # loop over nuclei
+            for n in range(0, molecule.natom()):
+                Zn = molecule.Z(n)
+                # loop over point charges
+                for c in range(0, point_charges.natom()):
+                    Qc = point_charges.Z(n)
+                    rvec = Rnuc[n,:] - Rchrg[c,:]
+                    r = la.norm(rvec)
+
+                    grad_QM[3*n:3*(n+1)]  -= Zn*Qc * rvec/pow(r,3)
+                    grad_CHG[3*c:3*(c+1)] += Zn*Qc * rvec/pow(r,3)
 
         return grad_QM, grad_CHG
 
@@ -991,13 +1039,22 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
             self.point_charges.set_units(psi4.core.GeometryUnits.Bohr)
 
             # gradient from external potential due to MM point charges
-            dVextDx_QM, dVextDx_CHG = self._electrostatic_embedding_GRAD(self.point_charges, self.basis, D)
+            dVextDx_QM, dVextDx_CHG = self._electrostatic_embedding_electrons_GRAD(self.point_charges, self.basis, D)
             grad_QM  += dVextDx_QM
             grad_CHG += dVextDx_CHG
 
             # revert to previous units if needed
             if (units == "Angstrom"):
                 self.point_charges.set_units(psi4.core.GeometryUnits.Angstrom)
+
+            # gradient from electrostatic energy of nuclei in the field of the external 
+            # point charges
+            dEextDx_QM, dEextDx_CHG = self._electrostatic_embedding_nuclei_GRAD(self.molecule, self.point_charges)
+            grad_QM  += dEextDx_QM
+            grad_CHG += dEextDx_CHG
+
+            # The gradients of the electrostatic interaction among the external point charges themselves 
+            # are not included.
 
 
         # combine gradients into single vector

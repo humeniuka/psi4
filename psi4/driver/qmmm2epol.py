@@ -801,14 +801,19 @@ class RHF_QMMM2ePol(object):
             point_charges.set_units(psi4.core.GeometryUnits.Bohr)
 
             # potential matrix due to point charges
-            Vext = self._electrostatic_embedding(point_charges, basis).np
+            Vext = self._electrostatic_embedding_electrons(point_charges, basis).np
+            # add external potential to core Hamiltonian
+            H += Vext
 
             # revert to previous units if needed
             if (units == "Angstrom"):
                 point_charges.set_units(psi4.core.GeometryUnits.Angstrom)
 
-            # add external potential to core Hamiltonian
-            H += Vext
+            # electrostatic energy of nuclei in the field of point charges
+            Enuc += self._electrostatic_embedding_nuclei(molecule, point_charges)
+
+            # The electrostatic interaction among the external point charges themselves is not
+            # included.
 
             """
             # add repulsion between point charges to nuclear energy
@@ -993,7 +998,7 @@ class RHF_QMMM2ePol(object):
         """
         return self.SCF_E
 
-    def _electrostatic_embedding(self, point_charges, basis):
+    def _electrostatic_embedding_electrons(self, point_charges, basis):
         """
         the electrostatic potential matrix due to the point charges
 
@@ -1003,6 +1008,18 @@ class RHF_QMMM2ePol(object):
 
         The point charge must have been set with 
         `point_charges.set_nuclear_charge(atom_idx, Qc)`
+
+        Parameters
+        ----------
+        point_charges   :   psi4.core.Molecule
+          external point charges
+        basis           :   psi4.core.BasisSet
+          basis set with atomic orbitals
+        
+        Returns
+        -------
+        Vext            :   (nAO, nAO) psi4.core.Matrix
+          external potential in AO basis
         """
         epot = core.ExternalPotential()
         for i in range(0, point_charges.natom()):
@@ -1012,6 +1029,46 @@ class RHF_QMMM2ePol(object):
                            point_charges.z(i))
         Vext = epot.computePotentialMatrix(basis)
         return Vext
+
+    def _electrostatic_embedding_nuclei(self, molecule, point_charges):
+        """
+        electrostatic energy of nuclei (n=1,...,natom) in the field of the external point charges (c=1,...,<num. point charges>)
+
+           (ext)              Zn * Qc
+          E      =  sum sum  --------
+           nuc       n   c    |Rn-Rc|
+
+        The point charge must have been set with 
+        `point_charges.set_nuclear_charge(atom_idx, Qc)`
+
+        Parameters
+        ----------
+        molecule        :   psi4.core.Molecule
+          QM region with nuclei
+        point_charges   :   psi4.core.Molecule
+          external point charges
+
+        Returns
+        -------
+        Eext_nuc        :   float
+          Coulomb energy between nuclei and external point charges
+        """
+        Eext_nuc = 0.0
+        if (point_charges.natom() > 0):
+            Rnuc = molecule.geometry().np
+            Rchrg = point_charges.geometry().np
+            # loop over nuclei
+            for n in range(0, molecule.natom()):
+                Zn = molecule.Z(n)
+                # loop over point charges
+                for c in range(0, point_charges.natom()):
+                    Qc = point_charges.Z(n)
+                    rvec = Rnuc[n,:] - Rchrg[c,:]
+                    r = la.norm(rvec)
+
+                    Eext_nuc += Zn*Qc/r
+
+        return Eext_nuc
 
     def _frozen_core_approximation(self, Ccore):
         """

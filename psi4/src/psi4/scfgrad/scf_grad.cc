@@ -191,7 +191,7 @@ SharedMatrix SCFDeriv::compute_gradient()
     if (external_pot_) {
         gradient_terms.push_back("External Potential");
         timer_on("Grad: External");
-        gradients_["External Potential"] = external_pot_->computePotentialGradients(basisset_, Dt);
+        gradients_["External Potential"] = external_pot_->computePotentialGradients(basisset_, Dt, true);
         timer_off("Grad: External");
     }  // end external
 

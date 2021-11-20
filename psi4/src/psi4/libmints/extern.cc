@@ -207,7 +207,7 @@ SharedMatrix ExternalPotential::computePotentialMatrix(std::shared_ptr<BasisSet>
     return V;
 }
 
-SharedMatrix ExternalPotential::computePotentialGradients(std::shared_ptr<BasisSet> basis, std::shared_ptr<Matrix> Dt) {
+SharedMatrix ExternalPotential::computePotentialGradients(std::shared_ptr<BasisSet> basis, std::shared_ptr<Matrix> Dt, bool include_nuclei) {
     // This will be easy to implement, I think, but just throw for now.
     if (bases_.size()) throw PSIEXCEPTION("Gradients with blurred external charges are not implemented yet.");
 
@@ -232,22 +232,28 @@ SharedMatrix ExternalPotential::computePotentialGradients(std::shared_ptr<BasisS
 
     // Start with the nuclear contribution
     grad->zero();
-    for (int cen = 0; cen < natom; ++cen) {
+
+    if (include_nuclei) {
+      // ExternalPotential::computePotentialMatrix(...) apparently does not include the electrostatic interaction
+      // between the point charges and the nuclei. For consistency ExternalPotential::computePotentialGradients(...)
+      // should also exclude this interaction, which can be achieved by setting `include_nuclei` = false.
+      for (int cen = 0; cen < natom; ++cen) {
         double xc = mol->x(cen);
         double yc = mol->y(cen);
         double zc = mol->z(cen);
         double cencharge = mol->Z(cen);
         for (int ext = 0; ext < nextc; ++ext) {
-            double charge = cencharge * Zxyzp[ext][0];
-            double x = Zxyzp[ext][1] - xc;
-            double y = Zxyzp[ext][2] - yc;
-            double z = Zxyzp[ext][3] - zc;
-            double r2 = x * x + y * y + z * z;
-            double r = sqrt(r2);
-            Gp[cen][0] += charge * x / (r * r2);
-            Gp[cen][1] += charge * y / (r * r2);
-            Gp[cen][2] += charge * z / (r * r2);
+	  double charge = cencharge * Zxyzp[ext][0];
+	  double x = Zxyzp[ext][1] - xc;
+	  double y = Zxyzp[ext][2] - yc;
+	  double z = Zxyzp[ext][3] - zc;
+	  double r2 = x * x + y * y + z * z;
+	  double r = sqrt(r2);
+	  Gp[cen][0] += charge * x / (r * r2);
+	  Gp[cen][1] += charge * y / (r * r2);
+	  Gp[cen][2] += charge * z / (r * r2);
         }
+      }
     }
 
     // Now the electronic contribution.

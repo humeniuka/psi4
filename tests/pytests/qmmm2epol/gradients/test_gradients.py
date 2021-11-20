@@ -217,6 +217,7 @@ def test_RHF_QMMM2ePol_energy_gradients():
     grad_comp = GradientComparisonRHF(molecule, polarizable_atoms, point_charges, 'sto-3g',
                                       polarizabilities=polarizabilities,
                                       same_site_integrals="exact", #"R.I.",
+                                      qmmm=True,
                                       verbose=0)
 
     # compute analytical and numerical QM gradients and compare them
@@ -232,4 +233,4 @@ if __name__ == "__main__":
 
     test_RHF_energy_gradients()
     test_RHF_QMMM2ePol_energy_gradients()
-
+    

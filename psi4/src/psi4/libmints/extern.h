@@ -82,7 +82,9 @@ class PSI_API ExternalPotential {
     /// Compute the external potential matrix in the given basis set
     SharedMatrix computePotentialMatrix(std::shared_ptr<BasisSet> basis);
     /// Compute the gradients due to the external potential
-    SharedMatrix computePotentialGradients(std::shared_ptr<BasisSet> basis, std::shared_ptr<Matrix> Dt);
+    // If include_nuclei == True, the gradients from the electrostatic interaction between the nuclear charges and the 
+    // point charges is included.
+    SharedMatrix computePotentialGradients(std::shared_ptr<BasisSet> basis, std::shared_ptr<Matrix> Dt, bool include_nuclei);
     /// Compute the contribution to the nuclear repulsion energy for the given molecule
     double computeNuclearEnergy(std::shared_ptr<Molecule> mol);
 
