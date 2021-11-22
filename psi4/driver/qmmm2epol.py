@@ -27,10 +27,15 @@
 #
 
 """
-Module with classes to integrate polarizable atoms into a QM calculation
+Module with classes to integrate polarizable atoms into a QM calculation.
+The reaction field induced in the polarizable MM atoms is directly included into
+the QM Hamiltonian, where it modifies both the 1-electron and 2-electron parts (see [DRF]).
 
 References
 ----------
+[DRF]    Thole, Bernard Theodoor and van Duijnen, Petrus Theodorus.
+         "On the Quantum Mechanical Treatment of Solvent Effects".
+	 Theoret. Chim. Acta 55 (1980) 307-318.
 [CPP]    Schwerdtfeger, P., and H. Silberbach. 
          "Multicenter integrals over long-range operators using Cartesian Gaussian functions." 
          Phys. Rev. A 37.8 (1988): 2834.

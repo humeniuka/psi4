@@ -648,10 +648,6 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         K = -np.einsum('ij,j->i', self.A, self.F_nucl)
         L = -0.5*np.einsum('i,j->ij', self.F_nucl, self.F_nucl)
         grad = self._gradFnucl(K) + self._gradA(L)
-        ### DEBUG
-        print("zero_electron_part_GRAD")
-        print(grad)
-        ###
         return grad
 
     def one_electron_part_GRAD(self, D):
@@ -733,11 +729,6 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         # add gradient dS/dx . dH/dS
         grad += self._gradS(dHdS)
 
-        ### DEBUG
-        print("one_electron_part_GRAD")
-        print(grad)
-        ###
-
         return grad
 
     def coulomb_J_GRAD(self, D1, D2):
@@ -769,11 +760,6 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         dJdA = -np.einsum('i,j->ij', FD1, FD2)
         # evaluate contractions, dJdx = dF/dx . dJ/dF + dA/dx . dJ/dA
         grad = self._gradFelec(dJdF) + self._gradA(dJdA)
-
-        ### DEBUG
-        print("coulomb_J_GRAD")
-        print(grad)
-        ###
 
         return grad
 
@@ -808,11 +794,6 @@ class PolarizationHamiltonianGradients(PolarizationHamiltonian):
         dKdA = - np.einsum('imn,jmn->ij', self.F_elec, FD2tD1t)
         # gradient contractions, dKdx = dF/dx . dK/dF + dA/dx . dK/dA
         grad = self._gradFelec(dKdF) + self._gradA(dKdA)
-
-        ### DEBUG
-        print("exchange_K_GRAD")
-        print(grad)
-        ###
 
         return grad
 
