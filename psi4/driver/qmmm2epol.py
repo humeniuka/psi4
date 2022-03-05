@@ -817,9 +817,9 @@ class RHF_QMMM2ePol(object):
             # electrostatic energy of nuclei in the field of point charges
             Enuc_ext = self._electrostatic_embedding_nuclei(molecule, point_charges)
             Enuc += Enuc_ext
-
-            # The electrostatic interaction among the external point charges themselves is not
-            # included.
+            # electrostatic self-interaction among the external point charges themselves
+            Echrg_ext = self._electrostatic_embedding_charges(point_charges)
+            Enuc += Echrg_ext
 
         if not polham is None:
             # add one-electron part of polarization potential to core Hamiltonian
@@ -1059,6 +1059,44 @@ class RHF_QMMM2ePol(object):
                     Enuc_ext += dE
 
         return Enuc_ext
+
+    def _electrostatic_embedding_charges(self, point_charges):
+        """
+        electrostatic self-interaction energy of the external point charges (c,d=1,...,<num. point charges>)
+
+           (ext)              Qc * Qd
+          E      =  sum sum   -------
+           chrg      c  c<d   |Rc-Rd|
+
+        The point charge must have been set with 
+        `point_charges.set_nuclear_charge(atom_idx, Qc)`
+
+        Parameters
+        ----------
+        point_charges   :   psi4.core.Molecule
+          external point charges
+
+        Returns
+        -------
+        Echrg_ext        :   float
+          Coulomb energy of external point charges
+        """
+        Echrg_ext = 0.0
+        if (point_charges.natom() > 0):
+            Rchrg = point_charges.geometry().np
+            # loop over point charges
+            for c in range(0, point_charges.natom()):
+                Qc = point_charges.Z(c)
+                # loop over other point charges d > c
+                for d in range(c+1, point_charges.natom()):
+                    Qd = point_charges.Z(d)
+                    rvec = Rchrg[c,:] - Rchrg[d,:]
+                    r = la.norm(rvec)
+                    dE = Qc*Qd/r
+
+                    Echrg_ext += dE
+
+        return Echrg_ext
 
     def _frozen_core_approximation(self, Ccore):
         """

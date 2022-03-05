@@ -919,6 +919,44 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
 
         return grad_QM, grad_CHG
 
+    def _electrostatic_embedding_charges_GRAD(self, point_charges):
+        """
+        gradients of electrostatic self-interaction of the external point charges (c,d=1,...,<num. point charges>)
+
+                (ext)                  Qc * Qd
+          grad E      =  sum sum grad  -------
+                chrg      c  c<d       |Rc-Rd|
+
+        The point charge must have been set with 
+        `point_charges.set_nuclear_charge(atom_idx, Qc)`
+
+        Parameters
+        ----------
+        point_charges   :   psi4.core.Molecule
+          external point charges
+
+        Returns
+        -------
+        grad_CHG  :  (3*<num. point charges>,) vector
+          gradient on point charges        
+        """
+        grad_CHG = np.zeros(3*point_charges.natom())
+        if (point_charges.natom() > 0):
+            Rchrg = point_charges.geometry().np
+            # loop over point charges
+            for c in range(0, point_charges.natom()):
+                Qc = point_charges.Z(c)
+                # loop over point charges
+                for d in range(c+1, point_charges.natom()):
+                    Qd = point_charges.Z(d)
+                    rvec = Rchrg[c,:] - Rchrg[d,:]
+                    r = la.norm(rvec)
+
+                    grad_CHG[3*c:3*(c+1)] -= Qc*Qd * rvec/pow(r,3)
+                    grad_CHG[3*d:3*(d+1)] += Qc*Qd * rvec/pow(r,3)
+
+        return grad_CHG
+
     def gradients(self):
         """
         Compute the gradient of the RHF energy
@@ -1034,9 +1072,9 @@ class RHF_QMMM2ePolGradients(RHF_QMMM2ePol):
             grad_QM  += dEextDx_QM
             grad_CHG += dEextDx_CHG
 
-            # The gradients of the electrostatic interaction among the external point charges themselves 
-            # are not included.
-
+            # gradient of the electrostatic interaction among the external point charges themselves 
+            dEextDx_CHG = self._electrostatic_embedding_charges_GRAD(self.point_charges)
+            grad_CHG += dEextDx_CHG
 
         # combine gradients into single vector
         grad = np.hstack((grad_QM, grad_POL, grad_CHG))
