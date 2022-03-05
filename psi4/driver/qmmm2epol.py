@@ -1132,7 +1132,7 @@ class RHF_QMMM2ePol(object):
         h1   :  np.ndarray (Nmo x Nmo)
           1e MO matrix elements (i|h^(1)|j)
         h2   :  np.ndarray (Nmo x Nmo x Nmo x Nmo)
-          2e MO matrix elements (ij|h^(1)|kl)
+          2e MO matrix elements (ij|h^(2)|kl)
         """
         # == AO to MO transformation ==
         # transform one-electron part (Hcore), which already includes the contribution
